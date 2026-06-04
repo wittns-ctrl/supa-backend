@@ -10,6 +10,8 @@ import {
 import { AuthService } from './auth.service';
 import { CreateAuthDto } from './dto/signup-auth.dto';
 import { UpdateAuthDto } from './dto/update-auth.dto';
+import { emailverificationDto } from './dto/emailVerification.dto';
+
 
 @Controller('auth')
 export class AuthController {
@@ -20,9 +22,9 @@ export class AuthController {
     return this.authService.createUser(signupdto);
   }
 
-  @Get()
-  findAll() {
-    return this.authService.findAll();
+  @Post('verifyOtp')
+  verifyOtp(@Body() verifydto:emailverificationDto) {
+    return this.authService.verifyOtp(verifydto);
   }
 
   @Get(':id')

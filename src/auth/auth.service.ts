@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes, randomInt } from 'crypto';
 import { MailService } from 'src/mail/mail.service';
+import { emailverificationDto } from './dto/emailVerification.dto';
 
 @Injectable()
 export class AuthService {
@@ -18,7 +19,7 @@ export class AuthService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly jwtservice: JwtService,
-    private readonly mailservice : MailService
+    private readonly mailservice: MailService,
   ) {}
 
   async createUser(signupdto: CreateAuthDto) {
@@ -49,13 +50,36 @@ export class AuthService {
       profile: signupdto.profile,
     });
 
-    await this.mailservice.sendOtpEmail(signupdto.email,otp)
+    await this.mailservice.sendOtpEmail(signupdto.email, otp);
 
     return 'open your email to check for the verification email';
   }
 
-  findAll() {
-    return `This action returns all auth`;
+  async verifyOtp(VerifyDto: emailverificationDto) {
+    const user = await this.userModel.findOne({ email: VerifyDto.email });
+
+    if (!user) {
+      throw new BadRequestException('user not found');
+    }
+
+    if (user.isVerified == true) {
+      return 'user already exists';
+    }
+
+    if (
+      !user.emailVerificationOtp ||
+      !user.emailVerificationOtpExpires ||
+      user.emailVerificationOtp !== VerifyDto.otp ||
+      user.emailVerificationOtpExpires < new Date()
+    ) {
+      throw new BadRequestException('otp expired');
+    }
+
+    user.emailVerificationOtp = undefined;
+    user.emailVerificationOtpExpires = undefined;
+    user.isVerified = true;
+
+    return 'email verified successfully';
   }
 
   findOne(id: number) {

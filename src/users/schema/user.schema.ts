@@ -36,9 +36,9 @@ export class User {
   @Prop()
   resetTokenExpiration!: Date;
   @Prop()
-  emailVerificationOtp!: string;
+  emailVerificationOtp?: string;
   @Prop()
-  emailVerificationOtpExpires!: Date;
+  emailVerificationOtpExpires?: Date;
   @Prop({ type: Profile })
   profile?: Profile;
 }

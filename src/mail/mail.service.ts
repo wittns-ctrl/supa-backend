@@ -20,7 +20,7 @@ export class MailService {
   async sendOtpEmail(to: string, otp: string) {
     const from = process.env.FROM_EMAIL || process.env.SMTP_USER;
 
-    const mailOptions : nodemailer.SendMailOptions = {
+    const mailOptions: nodemailer.SendMailOptions = {
       from,
       to,
       subject: 'Your verification code',
