@@ -16,7 +16,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('signup')
-  signup(@Body() signupdto:CreateAuthDto){
+  signup(@Body() signupdto: CreateAuthDto) {
     return this.authService.createUser(signupdto);
   }
 

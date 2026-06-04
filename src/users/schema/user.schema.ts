@@ -29,11 +29,16 @@ export class User {
   phone!: Number;
   @Prop({ type: String, enum: Object.values(roles), required: true })
   role!: roles;
-  @Prop({ default: roles.CUSTOMER })
+  @Prop({ required: true })
+  isVerified!: boolean;
   @Prop()
   resetToken?: string;
   @Prop()
-  resetTokenExpiration?: Date;
+  resetTokenExpiration!: Date;
+  @Prop()
+  emailVerificationOtp!: string;
+  @Prop()
+  emailVerificationOtpExpires!: Date;
   @Prop({ type: Profile })
   profile?: Profile;
 }

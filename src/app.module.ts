@@ -13,6 +13,7 @@ import { ProfilesModule } from './profiles/profiles.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
+import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
@@ -39,17 +40,18 @@ import { JwtModule } from '@nestjs/jwt';
       },
     }),
     JwtModule.registerAsync({
-      imports:[ConfigModule],
-      inject:[ConfigService],
-      useFactory: (configservice:ConfigService)=>{
-         return {
-          secret:configservice.get<string>('JWT_SECRET'),
-          signOptions:{
-            expiresIn:'15m'
-          }
-         }
-      }
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configservice: ConfigService) => {
+        return {
+          secret: configservice.get<string>('JWT_SECRET'),
+          signOptions: {
+            expiresIn: '15m',
+          },
+        };
+      },
     }),
+    MailModule,
   ],
   controllers: [AppController],
   providers: [AppService],

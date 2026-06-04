@@ -9,7 +9,8 @@ import { Model } from 'mongoose';
 import { roles, User, UserDocument } from '../users/schema/user.schema';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
+import { MailService } from 'src/mail/mail.service';
 
 @Injectable()
 export class AuthService {
@@ -17,6 +18,7 @@ export class AuthService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly jwtservice: JwtService,
+    private readonly mailservice : MailService
   ) {}
 
   async createUser(signupdto: CreateAuthDto) {
@@ -28,24 +30,28 @@ export class AuthService {
       throw new BadRequestException('User already exists');
     }
 
-
     const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(signupdto.password,salt)
- 
-        const newUser = await this.userModel.create({
+    const hashedPassword = await bcrypt.hash(signupdto.password, salt);
+
+    const otp = randomInt(100000, 999999).toString();
+    const expires = new Date();
+    expires.setMinutes(expires.getMinutes() + 5);
+
+    const newUser = await this.userModel.create({
       name: signupdto.name,
       email: signupdto.email,
       password: hashedPassword,
       phone: signupdto.phone,
       role: signupdto.role as roles,
+      isVerified: false,
+      emailVerificationOtp: otp,
+      emailVerificationOtpExpires: expires,
       profile: signupdto.profile,
     });
 
-    const payload = {sub:newUser._id.toString(),email:newUser.email}
+    await this.mailservice.sendOtpEmail(signupdto.email,otp)
 
-    const accesstoken = await this.jwtservice.sign(payload);
-
-    return {accesstoken};
+    return 'open your email to check for the verification email';
   }
 
   findAll() {
