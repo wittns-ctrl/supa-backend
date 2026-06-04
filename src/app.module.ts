@@ -10,24 +10,47 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProfilesModule } from './profiles/profiles.module';
-import {ConfigModule} from '@nestjs/config'
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+import { JwtModule } from '@nestjs/jwt';
 
 @Module({
-  imports: [AuthModule, 
-            UsersModule,  
-            RestaurantsModule, 
-            MenusModule, 
-            BookingsModule, 
-            ReviewsModule, 
-            NotificationsModule, 
-            PaymentsModule, 
-            ProfilesModule,
-            ConfigModule.forRoot({
-              isGlobal: true,
-            }),
-            MongooseModule.forRoot(process.env.MONGO_URI as string)
-          ],
+  imports: [
+    AuthModule,
+    UsersModule,
+    RestaurantsModule,
+    MenusModule,
+    BookingsModule,
+    ReviewsModule,
+    NotificationsModule,
+    PaymentsModule,
+    ProfilesModule,
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
+    MongooseModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        return {
+          uri: configService.get<string>('MONGO_URI'),
+        };
+      },
+    }),
+    JwtModule.registerAsync({
+      imports:[ConfigModule],
+      inject:[ConfigService],
+      useFactory: (configservice:ConfigService)=>{
+         return {
+          secret:configservice.get<string>('JWT_SECRET'),
+          signOptions:{
+            expiresIn:'15m'
+          }
+         }
+      }
+    }),
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

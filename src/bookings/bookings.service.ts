@@ -2,18 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { Model } from 'mongoose';
-import { bookings,bookingsDocument } from './schema/bookings.schema';
+import { bookings, bookingsDocument } from './schema/bookings.schema';
 import { InjectModel } from '@nestjs/mongoose';
 
 @Injectable()
 export class BookingsService {
-
   constructor(
     @InjectModel(bookings.name)
-    private readonly bookingsModel : Model<bookingsDocument>
-  ){}
+    private readonly bookingsModel: Model<bookingsDocument>,
+  ) {}
 
-  
   create(createBookingDto: CreateBookingDto) {
     return 'This action adds a new booking';
   }

@@ -2,17 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { restaurant,restaurantDocument } from './schema/restaurant.schema';
+import { restaurant, restaurantDocument } from './schema/restaurant.schema';
 import { Model } from 'mongoose';
 
 @Injectable()
 export class RestaurantsService {
-
   constructor(
     @InjectModel(restaurant.name)
-    private readonly restaurantModel : Model<restaurantDocument>
-  ){}
-  
+    private readonly restaurantModel: Model<restaurantDocument>,
+  ) {}
+
   create(createRestaurantDto: CreateRestaurantDto) {
     return 'This action adds a new restaurant';
   }

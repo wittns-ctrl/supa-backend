@@ -2,18 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { review,reviewDocument } from './schema/review.schema';
+import { review, reviewDocument } from './schema/review.schema';
 import { Model } from 'mongoose';
-
-
 
 @Injectable()
 export class ReviewsService {
-
   constructor(
     @InjectModel(review.name)
-    private readonly reviewModel:Model<reviewDocument>
-  ){}
+    private readonly reviewModel: Model<reviewDocument>,
+  ) {}
   create(createReviewDto: CreateReviewDto) {
     return 'This action adds a new review';
   }
