@@ -1,3 +1,4 @@
 export class resetAuthDto {
-  email!: string;
+  token!: string;
+  newPassword!: string;
 }

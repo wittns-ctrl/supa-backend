@@ -11,6 +11,8 @@ import { AuthService } from './auth.service';
 import { CreateAuthDto } from './dto/signup-auth.dto';
 import { UpdateAuthDto } from './dto/update-auth.dto';
 import { emailverificationDto } from './dto/emailVerification.dto';
+import { loginAuthDto } from './dto/login-auth.dto';
+import { ForgotAuthDto } from './dto/Forgot.dto';
 
 
 @Controller('auth')
@@ -27,14 +29,14 @@ export class AuthController {
     return this.authService.verifyOtp(verifydto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.authService.findOne(+id);
+  @Post('Login')
+  Login(@Body() Logindto:loginAuthDto) {
+    return this.authService.signin(Logindto);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateAuthDto: UpdateAuthDto) {
-    return this.authService.update(+id, updateAuthDto);
+  @Post('forgot')
+  forgotPassword(@Body() forgetDto:ForgotAuthDto) {
+    return this.authService.ForgotPassword(forgetDto);
   }
 
   @Delete(':id')

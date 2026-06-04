@@ -34,7 +34,7 @@ export class User {
   @Prop()
   resetToken?: string;
   @Prop()
-  resetTokenExpiration!: Date;
+  resetTokenExpiration: Date | undefined;
   @Prop()
   emailVerificationOtp?: string;
   @Prop()

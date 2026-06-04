@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { CreateAuthDto } from './dto/signup-auth.dto';
 import { UpdateAuthDto } from './dto/update-auth.dto';
 import { loginAuthDto } from './dto/login-auth.dto';
@@ -9,7 +9,7 @@ import { Model } from 'mongoose';
 import { roles, User, UserDocument } from '../users/schema/user.schema';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { randomBytes, randomInt } from 'crypto';
+import { randomBytes, randomInt, randomUUID } from 'crypto';
 import { MailService } from 'src/mail/mail.service';
 import { emailverificationDto } from './dto/emailVerification.dto';
 
@@ -79,18 +79,84 @@ export class AuthService {
     user.emailVerificationOtpExpires = undefined;
     user.isVerified = true;
 
+    await user.save()
+
     return 'email verified successfully';
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} auth`;
+  async signin(signinDto:loginAuthDto) {
+    const user = await this.userModel.findOne({email:signinDto.email})
+
+    if(!user){
+      throw new UnauthorizedException('user not exits')
+    }
+
+    const isMatch = await bcrypt.compare(signinDto.password,user.password)
+
+    if(!isMatch){
+      throw new UnauthorizedException('invalid password')
+    }
+
+    const payload = {sub:user._id.toString(),email:user.email,role:user.role}
+
+    const accessToken =  this.jwtservice.sign(payload);
+
+    return{
+      accessToken
+    }
   }
 
-  update(id: number, updateAuthDto: UpdateAuthDto) {
-    return `This action updates a #${id} auth`;
+  async ForgotPassword(forgotDto:ForgotAuthDto) {
+    const user = await this.userModel.findOne({email:forgotDto.email})
+
+    if(!user){
+      throw new NotFoundException('user not found');
+    }
+
+    const resettoken = randomUUID()
+    const resettokenExpires = new Date()
+    resettokenExpires.setMinutes(resettokenExpires.getMinutes() + 15);
+
+    user.resetToken = resettoken;
+    user.resetTokenExpiration = resettokenExpires;
+
+    user.save()
+    
+    const link = `http://localhost:3000/auth/reset-password?token=${resettoken}`;
+
+    await this.mailservice.sendOtpEmail(forgotDto.email, link)
+
+
+    return {
+      message:"Reset link set to the email"
+    }
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} auth`;
+  async ressetpassword(resetDto:resetAuthDto) {
+    const user = await this.userModel.findOne({
+      resetToken:resetDto.token
+    })
+
+    if(!user){
+      throw new NotFoundException('user not found')
+    }
+
+    if(!user.resetToken ||
+      user.resetTokenExpiration < new Date()
+    ){
+      throw new UnauthorizedException('token expired')
+    }
+
+    const hash = await bcrypt.hash(resetDto.newPassword,12);
+
+    user.password = hash
+    user.resetToken = undefined
+    user.resetTokenExpiration = undefined
+
+    await user.save()
+
+    return {
+      message:"password reset successfully"
+    }
   }
 }
