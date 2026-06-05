@@ -13,6 +13,8 @@ import { UpdateAuthDto } from './dto/update-auth.dto';
 import { emailverificationDto } from './dto/emailVerification.dto';
 import { loginAuthDto } from './dto/login-auth.dto';
 import { ForgotAuthDto } from './dto/Forgot.dto';
+import { resetAuthDto } from './dto/reset-auth.dto';
+import { LogoutAuthDto } from './dto/Logout.dto';
 
 
 @Controller('auth')
@@ -39,8 +41,14 @@ export class AuthController {
     return this.authService.ForgotPassword(forgetDto);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.authService.remove(+id);
+  @Post('reset')
+  resetpassword(@Body() resetdto:resetAuthDto) {
+  return this.authService.ressetpassword(resetdto)
   }
+
+  @Post('logout')
+  logout(@Body() logoutdto:LogoutAuthDto){
+    return this.authService.Logout(logoutdto)
+  }
+
 }

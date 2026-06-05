@@ -12,6 +12,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomBytes, randomInt, randomUUID } from 'crypto';
 import { MailService } from 'src/mail/mail.service';
 import { emailverificationDto } from './dto/emailVerification.dto';
+import { LogoutAuthDto } from './dto/Logout.dto';
 
 @Injectable()
 export class AuthService {
@@ -97,12 +98,26 @@ export class AuthService {
       throw new UnauthorizedException('invalid password')
     }
 
-    const payload = {sub:user._id.toString(),email:user.email,role:user.role}
+  
 
+    const payload = {sub:user._id.toString(),email:user.email,role:user.role}
+    const refreshtoken = this.jwtservice.sign(
+      payload,{
+        secret:process.env.JWT_REFRESH,
+        expiresIn:'7d'
+      }
+    )
+
+    const hashedrefreshtoken = await bcrypt.hash(refreshtoken,10)
+
+    user.refreshToken = hashedrefreshtoken
     const accessToken =  this.jwtservice.sign(payload);
 
+    user.save()
+
     return{
-      accessToken
+      accessToken,
+      refreshtoken
     }
   }
 
@@ -141,8 +156,8 @@ export class AuthService {
       throw new NotFoundException('user not found')
     }
 
-    if(!user.resetToken ||
-      user.resetTokenExpiration < new Date()
+    if( !user.resetToken ||
+      user.resetTokenExpiration!  < new Date()
     ){
       throw new UnauthorizedException('token expired')
     }
@@ -157,6 +172,27 @@ export class AuthService {
 
     return {
       message:"password reset successfully"
+    }
+  }
+
+  async Logout(logoutDto:LogoutAuthDto){
+ 
+    const user = await this.userModel.findOne({email:logoutDto.email})
+
+    if(!user){
+      throw new UnauthorizedException('user not found');
+    }
+
+    if(!user.refreshToken){
+     throw new UnauthorizedException('user already logged out')
+    }
+
+    user.refreshToken = undefined
+
+    await user.save()
+
+    return {
+      message:"user logged out successfully",
     }
   }
 }

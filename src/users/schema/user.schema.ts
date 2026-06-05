@@ -32,9 +32,11 @@ export class User {
   @Prop({ required: true })
   isVerified!: boolean;
   @Prop()
+  refreshToken?:string
+  @Prop()
   resetToken?: string;
   @Prop()
-  resetTokenExpiration: Date | undefined;
+  resetTokenExpiration?: Date ;
   @Prop()
   emailVerificationOtp?: string;
   @Prop()
