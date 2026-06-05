@@ -26,7 +26,7 @@ export class restaurant {
   @Prop({ type: Location, required: true })
   location!: Location;
   @Prop({ required: true })
-  phone!: string;
+  phone!: Number;
   @Prop({ required: true })
   opening!: string;
   @Prop({ required: true })
@@ -35,6 +35,7 @@ export class restaurant {
   images!: string[];
   @Prop({ required: true })
   isApproved!: boolean;
+  default!:false;
 }
 
 export const restaurantSchema = SchemaFactory.createForClass(restaurant);

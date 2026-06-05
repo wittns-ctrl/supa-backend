@@ -15,9 +15,9 @@ import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 export class RestaurantsController {
   constructor(private readonly restaurantsService: RestaurantsService) {}
 
-  @Post()
+  @Post('register')
   create(@Body() createRestaurantDto: CreateRestaurantDto) {
-    return this.restaurantsService.create(createRestaurantDto);
+    return this.restaurantsService.createRestaurant(createRestaurantDto);
   }
 
   @Get()
