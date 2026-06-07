@@ -20,6 +20,10 @@ export class menu {
   image!: string;
   @Prop({ required: true })
   isAvailable!: boolean;
+  @Prop({ default: false })
+  spicy!: boolean;
+  @Prop({ default: false })
+  veg!: boolean;
 }
 
 export const menuschema = SchemaFactory.createForClass(menu);

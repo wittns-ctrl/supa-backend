@@ -4,6 +4,14 @@ import { User } from 'src/users/schema/user.schema';
 
 export type restaurantDocument = restaurant & Document;
 
+export enum RestaurantStatus {
+  PENDING = 'pending',
+  ACTIVE = 'active',
+  SUSPENDED = 'suspended',
+  REJECTED = 'rejected',
+}
+
+@Schema({ _id: false })
 export class Location {
   @Prop({ required: true })
   address!: string;
@@ -33,9 +41,20 @@ export class restaurant {
   capacity!: Number;
   @Prop({ type: [String], default: [] })
   images!: string[];
-  @Prop({ required: true })
+  @Prop({ required: true, default: false })
   isApproved!: boolean;
-  default!:false;
+  @Prop({ type: String, enum: Object.values(RestaurantStatus), default: RestaurantStatus.PENDING })
+  status!: RestaurantStatus;
+  @Prop({ default: 'International' })
+  cuisine!: string;
+  @Prop({ default: 0 })
+  rating!: Number;
+  @Prop({ default: 0 })
+  reviewCount!: Number;
+  @Prop({ type: [String], default: [] })
+  amenities!: string[];
+  @Prop({ type: [String], default: [] })
+  verificationDocs!: string[];
 }
 
 export const restaurantSchema = SchemaFactory.createForClass(restaurant);

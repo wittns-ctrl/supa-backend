@@ -1,5 +1,6 @@
 import { Prop, SchemaFactory, Schema } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
+import { restaurant } from 'src/restaurants/schema/restaurant.schema';
 
 export type UserDocument = User & Document;
 
@@ -9,12 +10,31 @@ export enum roles {
   ADMIN = 'admin',
 }
 
+export enum UserStatus {
+  ACTIVE = 'active',
+  BLOCKED = 'blocked',
+}
+
 @Schema()
 export class Profile {
   @Prop()
   bio!: string;
   @Prop()
   imageurl!: string;
+}
+
+@Schema({ _id: false })
+export class DeliveryAddress {
+  @Prop()
+  street?: string;
+  @Prop()
+  apartment?: string;
+  @Prop()
+  city?: string;
+  @Prop()
+  postalCode?: string;
+  @Prop()
+  instructions?: string;
 }
 
 @Schema({ timestamps: true })
@@ -31,18 +51,24 @@ export class User {
   role!: roles;
   @Prop({ required: true })
   isVerified!: boolean;
+  @Prop({ type: String, enum: Object.values(UserStatus), default: UserStatus.ACTIVE })
+  status!: UserStatus;
   @Prop()
-  refreshToken?:string
+  refreshToken?: string;
   @Prop()
   resetToken?: string;
   @Prop()
-  resetTokenExpiration?: Date ;
+  resetTokenExpiration?: Date;
   @Prop()
   emailVerificationOtp?: string;
   @Prop()
   emailVerificationOtpExpires?: Date;
   @Prop({ type: Profile })
   profile?: Profile;
+  @Prop({ type: DeliveryAddress })
+  deliveryAddress?: DeliveryAddress;
+  @Prop({ type: [{ type: Types.ObjectId, ref: restaurant.name }], default: [] })
+  favorites!: Types.ObjectId[];
 }
 
 export const Userschema = SchemaFactory.createForClass(User);

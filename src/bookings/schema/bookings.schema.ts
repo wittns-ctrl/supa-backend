@@ -8,6 +8,7 @@ export enum reviewsEnums {
   CONFIRMED = 'confirmed',
   CANCELLED = 'cancelled',
   COMPLETED = 'completed',
+  REJECTED = 'rejected',
 }
 
 export type bookingsDocument = bookings & Document;
@@ -28,6 +29,10 @@ export class bookings {
   status!: reviewsEnums;
   @Prop({ required: true })
   specialRequest!: string;
+  @Prop()
+  ownerNote?: string;
+  @Prop()
+  rejectionReason?: string;
 }
 
 export const bookingschema = SchemaFactory.createForClass(bookings);

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { CreateMailDto } from './dto/create-mail.dto';
 
 @Injectable()
 export class MailService {
@@ -29,5 +30,19 @@ export class MailService {
     };
 
     await this.transporter.sendMail(mailOptions);
+  }
+
+  async sendContactEmail(dto: CreateMailDto) {
+    const from = process.env.FROM_EMAIL || process.env.SMTP_USER;
+    const supportEmail = process.env.SUPPORT_EMAIL || from;
+
+    await this.transporter.sendMail({
+      from,
+      to: supportEmail,
+      replyTo: dto.email,
+      subject: `SupaMeal Contact: ${dto.fullName}`,
+      text: `From: ${dto.fullName} <${dto.email}>\n\n${dto.message}`,
+      html: `<p><strong>From:</strong> ${dto.fullName} &lt;${dto.email}&gt;</p><p>${dto.message}</p>`,
+    });
   }
 }

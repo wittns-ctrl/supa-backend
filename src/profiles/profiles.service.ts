@@ -1,26 +1,34 @@
-import { Injectable } from '@nestjs/common';
-import { CreateProfileDto } from './dto/create-profile.dto';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { InjectModel } from '@nestjs/mongoose';
+import { User, UserDocument } from 'src/users/schema/user.schema';
+import { Model } from 'mongoose';
+import { sanitizeUser } from 'src/common/utils/user-response.util';
 
 @Injectable()
 export class ProfilesService {
-  create(createProfileDto: CreateProfileDto) {
-    return 'This action adds a new profile';
+  constructor(
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+  ) {}
+
+  async findOne(userId: string) {
+    const user = await this.userModel.findById(userId).select('-password -refreshToken');
+    if (!user) throw new NotFoundException('Profile not found');
+    return sanitizeUser(user);
   }
 
-  findAll() {
-    return `This action returns all profiles`;
-  }
+  async update(userId: string, dto: UpdateProfileDto) {
+    const update: Record<string, unknown> = {};
+    if (dto.bio !== undefined || dto.imageurl !== undefined) {
+      update.profile = { bio: dto.bio, imageurl: dto.imageurl };
+    }
+    if (dto.name) update.name = dto.name;
+    if (dto.phone) update.phone = dto.phone;
 
-  findOne(id: number) {
-    return `This action returns a #${id} profile`;
-  }
-
-  update(id: number, updateProfileDto: UpdateProfileDto) {
-    return `This action updates a #${id} profile`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} profile`;
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, update, { new: true })
+      .select('-password -refreshToken');
+    if (!user) throw new NotFoundException('Profile not found');
+    return sanitizeUser(user);
   }
 }

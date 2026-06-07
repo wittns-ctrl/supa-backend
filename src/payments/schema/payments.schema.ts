@@ -15,6 +15,8 @@ export type paymentDocument = payment & Document;
 export class payment {
   @Prop({ type: Types.ObjectId, ref: bookings.name })
   bookingId!: string;
+  @Prop({ type: Types.ObjectId, ref: 'order' })
+  orderId?: Types.ObjectId;
   @Prop({ required: true })
   amount!: Number;
   @Prop({ type: String, enum: Object.values(Payments), required: true })

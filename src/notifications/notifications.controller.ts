@@ -3,43 +3,45 @@ import {
   Get,
   Post,
   Body,
-  Patch,
   Param,
   Delete,
+  Query,
+  Patch,
+  UseGuards,
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
-import { UpdateNotificationDto } from './dto/update-notification.dto';
+import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/common/guards/roles.guard';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { roles } from 'src/users/schema/user.schema';
 
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Post()
-  create(@Body() createNotificationDto: CreateNotificationDto) {
-    return this.notificationsService.create(createNotificationDto);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(roles.ADMIN)
+  create(@Body() dto: CreateNotificationDto) {
+    return this.notificationsService.create(dto);
   }
 
   @Get()
-  findAll() {
-    return this.notificationsService.findAll();
+  @UseGuards(JwtAuthGuard)
+  findAll(@Query('userId') userId?: string) {
+    return this.notificationsService.findAll(userId);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.notificationsService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body() updateNotificationDto: UpdateNotificationDto,
-  ) {
-    return this.notificationsService.update(+id, updateNotificationDto);
+  @Patch(':id/read')
+  @UseGuards(JwtAuthGuard)
+  markRead(@Param('id') id: string) {
+    return this.notificationsService.markRead(id);
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard)
   remove(@Param('id') id: string) {
-    return this.notificationsService.remove(+id);
+    return this.notificationsService.remove(id);
   }
 }

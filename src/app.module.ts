@@ -10,6 +10,10 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ProfilesModule } from './profiles/profiles.module';
+import { OrdersModule } from './orders/orders.module';
+import { AdminModule } from './admin/admin.module';
+import { PromosModule } from './promos/promos.module';
+import { SeedModule } from './seed/seed.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
@@ -17,6 +21,26 @@ import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
+    MongooseModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        uri: configService.get<string>('MONGO_URI'),
+      }),
+    }),
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      global: true,
+      useFactory: (configservice: ConfigService) => ({
+        secret: configservice.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '15m' },
+      }),
+    }),
     AuthModule,
     UsersModule,
     RestaurantsModule,
@@ -26,32 +50,11 @@ import { MailModule } from './mail/mail.module';
     NotificationsModule,
     PaymentsModule,
     ProfilesModule,
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-    }),
-    MongooseModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        return {
-          uri: configService.get<string>('MONGO_URI'),
-        };
-      },
-    }),
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configservice: ConfigService) => {
-        return {
-          secret: configservice.get<string>('JWT_SECRET'),
-          signOptions: {
-            expiresIn: '15m',
-          },
-        };
-      },
-    }),
+    OrdersModule,
+    AdminModule,
+    PromosModule,
     MailModule,
+    SeedModule,
   ],
   controllers: [AppController],
   providers: [AppService],
