@@ -1,6 +1,5 @@
 import { Prop, SchemaFactory, Schema } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { restaurant } from 'src/restaurants/schema/restaurant.schema';
 
 export type UserDocument = User & Document;
 
@@ -67,7 +66,7 @@ export class User {
   profile?: Profile;
   @Prop({ type: DeliveryAddress })
   deliveryAddress?: DeliveryAddress;
-  @Prop({ type: [{ type: Types.ObjectId, ref: restaurant.name }], default: [] })
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'restaurant' }], default: [] })
   favorites!: Types.ObjectId[];
 }
 

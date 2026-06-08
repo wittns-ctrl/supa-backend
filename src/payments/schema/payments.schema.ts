@@ -13,7 +13,7 @@ export type paymentDocument = payment & Document;
 
 @Schema({ timestamps: true })
 export class payment {
-  @Prop({ type: Types.ObjectId, ref: bookings.name })
+  @Prop({ type: Types.ObjectId, ref: 'bookings' })
   bookingId!: string;
   @Prop({ type: Types.ObjectId, ref: 'order' })
   orderId?: Types.ObjectId;

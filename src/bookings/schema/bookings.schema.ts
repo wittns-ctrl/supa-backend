@@ -1,7 +1,5 @@
 import { Prop, SchemaFactory, Schema } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { User } from 'src/users/schema/user.schema';
-import { restaurant } from 'src/restaurants/schema/restaurant.schema';
 
 export enum reviewsEnums {
   PENDING = 'pending',
@@ -15,9 +13,9 @@ export type bookingsDocument = bookings & Document;
 
 @Schema({ timestamps: true })
 export class bookings {
-  @Prop({ type: Types.ObjectId, ref: User.name, required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   customerId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: restaurant.name, required: true })
+  @Prop({ type: Types.ObjectId, ref: 'restaurant', required: true })
   restaurantId!: Types.ObjectId;
   @Prop({ required: true })
   bookingDate!: Date;

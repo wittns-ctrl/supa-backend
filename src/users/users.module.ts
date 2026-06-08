@@ -3,14 +3,14 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { User, Userschema } from './schema/user.schema';
-import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
 import { AuthModule } from 'src/auth/auth.module';
+import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: User.name, schema: Userschema },
-      { name: restaurant.name, schema: restaurantSchema },
+      { name: restaurant.name, schema: restaurantSchema }
     ]),
     AuthModule,
   ],

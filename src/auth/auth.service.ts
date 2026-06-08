@@ -38,7 +38,11 @@ export class AuthService {
     }
 
     const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(signupdto.password, salt);
+    if (!signupdto.password) {
+  throw new BadRequestException('Password is required');
+}
+const hashedPassword = await bcrypt.hash(signupdto.password, salt);
+
 
     const otp = randomInt(100000, 999999).toString();
     const expires = new Date();

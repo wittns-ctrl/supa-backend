@@ -1,11 +1,39 @@
+import { IsString, IsNotEmpty, IsOptional, IsNumberString, IsIn } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ValidateNested } from 'class-validator';
+
+class ProfileDto {
+  @IsOptional()
+  @IsString()
+  bio?: string;
+
+  @IsOptional()
+  @IsString()
+  imageurl?: string;
+}
+
 export class CreateAuthDto {
+  @IsString()
+  @IsNotEmpty()
   name!: string;
+
+  @IsString()
+  @IsNotEmpty()
   email!: string;
-  password!: string;
-  phone!: Number;
+
+  @IsString()
+  @IsNotEmpty()
+  password!: string;           // 👈 this will now throw 400 if missing/undefined
+
+  @IsOptional()
+  phone?: number;             // 👈 lowercase number (primitive)
+
+  @IsString()
+  @IsNotEmpty()
   role!: string;
-  profile?: {
-    bio?: string;
-    imageurl?: string;
-  };
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProfileDto)
+  profile?: ProfileDto;
 }
