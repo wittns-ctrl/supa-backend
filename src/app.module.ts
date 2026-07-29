@@ -28,9 +28,13 @@ import { MailModule } from './mail/mail.module';
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>('MONGO_URI'),
-      }),
+      useFactory: async (configService: ConfigService) => {
+        let uri = configService.get<string>('MONGO_URI') || 'mongodb://localhost:27017/supameal';
+        return {
+          uri,
+          serverSelectionTimeoutMS: 5000,
+        };
+      },
     }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

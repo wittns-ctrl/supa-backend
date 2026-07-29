@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -98,7 +99,7 @@ export class OrdersService {
     await this.paymentModel.create({
       orderId: created._id,
       amount: total,
-      status: Payments.PAID,
+      status: Payments.PENDING,
       transactionId: randomUUID(),
     });
 
@@ -190,6 +191,10 @@ export class OrdersService {
   async reorder(id: string, customerId: string) {
     const original = await this.orderModel.findById(id);
     if (!original) throw new NotFoundException('Order not found');
+
+    if (original.customerId.toString() !== customerId) {
+      throw new UnauthorizedException('You are not authorized to reorder this');
+    }
 
     return this.create({
       customerId,

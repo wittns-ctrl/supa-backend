@@ -27,10 +27,9 @@ import { MailService } from 'src/mail/mail.service';
         };
       },
     }),
-    MailModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy,MailService],
+  providers: [AuthService, JwtStrategy],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}

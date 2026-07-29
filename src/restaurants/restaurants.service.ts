@@ -227,7 +227,15 @@ export class RestaurantsService {
 
   private formatRestaurant(r: restaurantDocument) {
     const obj = r.toObject();
-    const owner = obj.ownerId as unknown as { name?: string; email?: string };
+    // After populate, ownerId may be an object, null, or an ObjectId string
+    const ownerObj = obj.ownerId as unknown as { name?: string; email?: string; _id?: Types.ObjectId } | null | Types.ObjectId;
+    const ownerData = ownerObj && typeof ownerObj === 'object' && 'name' in ownerObj
+      ? ownerObj as { name?: string; email?: string; _id?: Types.ObjectId }
+      : null;
+    const rawOwnerId = ownerObj && typeof ownerObj === 'object' && '_id' in ownerObj
+      ? (ownerObj as { _id?: Types.ObjectId })._id?.toString()
+      : ownerObj?.toString?.() ?? null;
+
     return {
       id: obj._id.toString(),
       name: obj.name,
@@ -240,10 +248,10 @@ export class RestaurantsService {
       image: obj.images?.[0] || '',
       images: obj.images,
       isPromo: false,
-      ownerId: typeof obj.ownerId === 'object' ? (obj.ownerId as { _id: Types.ObjectId })._id?.toString() : obj.ownerId?.toString(),
-      owner: owner?.name || 'Owner',
+      ownerId: rawOwnerId,
+      owner: ownerData?.name || 'Owner',
       location: obj.location,
-      address: `${obj.location?.address}, ${obj.location?.city}`,
+      address: `${obj.location?.address ?? ''}, ${obj.location?.city ?? ''}`,
       hours: obj.opening,
       opening: obj.opening,
       capacity: obj.capacity,

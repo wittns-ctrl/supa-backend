@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { InjectModel } from '@nestjs/mongoose';
@@ -34,18 +34,31 @@ export class ReviewsService {
     return this.formatReview(item);
   }
 
-  async update(id: string, updateReviewDto: UpdateReviewDto) {
-    const updated = await this.reviewModel.findByIdAndUpdate(id, updateReviewDto, {
+  async update(id: string, updateReviewDto: UpdateReviewDto, userId: string, userRole: string) {
+    const updated = await this.reviewModel.findById(id);
+    if (!updated) throw new NotFoundException('Review not found');
+
+    if (userRole !== 'admin' && updated.customerId.toString() !== userId) {
+      throw new UnauthorizedException('You are not authorized to update this review');
+    }
+
+    const saved = await this.reviewModel.findByIdAndUpdate(id, updateReviewDto, {
       new: true,
     });
-    if (!updated) throw new NotFoundException('Review not found');
-    await this.updateRestaurantRating(updated.restaurantId.toString());
-    return this.formatReview(updated);
+    if (!saved) throw new NotFoundException('Review not found');
+    await this.updateRestaurantRating(saved.restaurantId.toString());
+    return this.formatReview(saved);
   }
 
-  async remove(id: string) {
-    const deleted = await this.reviewModel.findByIdAndDelete(id);
+  async remove(id: string, userId: string, userRole: string) {
+    const deleted = await this.reviewModel.findById(id);
     if (!deleted) throw new NotFoundException('Review not found');
+
+    if (userRole !== 'admin' && deleted.customerId.toString() !== userId) {
+      throw new UnauthorizedException('You are not authorized to delete this review');
+    }
+
+    await this.reviewModel.findByIdAndDelete(id);
     await this.updateRestaurantRating(deleted.restaurantId.toString());
     return { message: 'Review deleted' };
   }

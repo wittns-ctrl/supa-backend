@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { Model, Types } from 'mongoose';
@@ -86,7 +86,14 @@ export class BookingsService {
     return this.formatBooking(updated);
   }
 
-  async remove(id: string) {
+  async remove(id: string, userId: string, userRole: string) {
+    const booking = await this.bookingsModel.findById(id);
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    if (userRole !== 'admin' && booking.customerId.toString() !== userId) {
+      throw new UnauthorizedException('You are not authorized to cancel this booking');
+    }
+
     const updated = await this.bookingsModel.findByIdAndUpdate(
       id,
       { status: reviewsEnums.CANCELLED },

@@ -15,6 +15,7 @@ import { UpdateBookingDto } from './dto/update-booking.dto';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { roles } from 'src/users/schema/user.schema';
 
 @Controller('bookings')
@@ -51,7 +52,7 @@ export class BookingsController {
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard)
-  remove(@Param('id') id: string) {
-    return this.bookingsService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
+    return this.bookingsService.remove(id, user.id, user.role);
   }
 }

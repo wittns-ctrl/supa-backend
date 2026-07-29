@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { RestaurantsService } from './restaurants.service';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
@@ -16,8 +17,8 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { roles } from 'src/users/schema/user.schema';
-import { RestaurantStatus } from './schema/restaurant.schema';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
+import { RestaurantStatus } from './schema/restaurant.schema';
 
 @Controller('restaurants')
 export class RestaurantsController {
@@ -48,7 +49,10 @@ export class RestaurantsController {
 
   @Get('owner/:ownerId')
   @UseGuards(JwtAuthGuard)
-  findByOwner(@Param('ownerId') ownerId: string) {
+  findByOwner(@Param('ownerId') ownerId: string, @CurrentUser() user: { id: string; role: string }) {
+    if (user.role !== 'admin' && user.id !== ownerId) {
+      throw new UnauthorizedException('You are not authorized to view these restaurants');
+    }
     return this.restaurantsService.findByOwner(ownerId);
   }
 

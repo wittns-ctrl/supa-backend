@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { notification, notificationDocument } from './schema/notifications.schema';
@@ -28,19 +28,28 @@ export class NotificationsService {
     return items.map((n) => this.format(n));
   }
 
-  async markRead(id: string) {
-    const updated = await this.notificationModel.findByIdAndUpdate(
-      id,
-      { isRead: true },
-      { new: true },
-    );
+  async markRead(id: string, userId: string) {
+    const updated = await this.notificationModel.findById(id);
     if (!updated) throw new NotFoundException('Notification not found');
+
+    if (updated.userId.toString() !== userId) {
+      throw new UnauthorizedException('You are not authorized to modify this notification');
+    }
+
+    updated.isRead = true;
+    await updated.save();
     return this.format(updated);
   }
 
-  async remove(id: string) {
-    const deleted = await this.notificationModel.findByIdAndDelete(id);
+  async remove(id: string, userId: string) {
+    const deleted = await this.notificationModel.findById(id);
     if (!deleted) throw new NotFoundException('Notification not found');
+
+    if (deleted.userId.toString() !== userId) {
+      throw new UnauthorizedException('You are not authorized to delete this notification');
+    }
+
+    await this.notificationModel.findByIdAndDelete(id);
     return { message: 'Notification dismissed' };
   }
 
