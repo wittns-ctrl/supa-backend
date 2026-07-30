@@ -34,6 +34,12 @@ export class NotificationsController {
     return this.notificationsService.findAll(userId);
   }
 
+  @Patch('read-all')
+  @UseGuards(JwtAuthGuard)
+  markAllRead(@CurrentUser() user: { id: string }) {
+    return this.notificationsService.markAllRead(user.id);
+  }
+
   @Patch(':id/read')
   @UseGuards(JwtAuthGuard)
   markRead(@Param('id') id: string, @CurrentUser() user: { id: string }) {

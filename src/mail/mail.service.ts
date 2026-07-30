@@ -99,7 +99,11 @@ export class MailService implements OnModuleInit {
   private async sendViaResend(to: string, subject: string, html: string, text: string): Promise<boolean> {
     if (!this.resendApiKey) return false;
 
-    const from = process.env.FROM_EMAIL?.trim() || 'onboarding@resend.dev';
+    let from = process.env.FROM_EMAIL?.trim() || 'onboarding@resend.dev';
+    // Resend requires verified domain or onboarding@resend.dev
+    if (from.includes('@gmail.com') || from.includes('@yahoo.com') || from.includes('@hotmail.com')) {
+      from = 'SupaMeal <onboarding@resend.dev>';
+    }
 
     try {
       const response = await fetch('https://api.resend.com/emails', {
@@ -144,26 +148,22 @@ export class MailService implements OnModuleInit {
   }
 
   // ── Console fallback printer ───────────────────────────────────────────────
-  private printToConsole(type: 'OTP' | 'RESET' | 'CONTACT', to: string, value: string) {
+  private printToConsole(type: 'RESET' | 'CONTACT', to: string, value: string) {
     const line = '═'.repeat(62);
-    const icons = { OTP: '📧  VERIFICATION CODE', RESET: '🔑  PASSWORD RESET LINK', CONTACT: '📬  CONTACT FORM' };
+    const icons = { RESET: '🔑  PASSWORD RESET LINK', CONTACT: '📬  CONTACT FORM' };
     console.log(`\n${line}`);
     console.log(`  ${icons[type]}`);
     console.log(line);
     console.log(`  Recipient : ${to}`);
-    if (type === 'OTP')   console.log(`  OTP Code  : ${value}  ← ENTER THIS`);
     if (type === 'RESET') console.log(`  Link      : ${value}`);
     if (type === 'CONTACT') console.log(`  Message   : ${value}`);
-    if (type === 'OTP')   console.log(`  Expires   : 5 minutes`);
     if (type === 'RESET') console.log(`  Expires   : 15 minutes`);
     console.log(`${line}\n`);
   }
 
   // ── Send OTP email ────────────────────────────────────────────────────────
   async sendOtpEmail(to: string, otp: string) {
-    // Always print to console — developer safety net
-    this.printToConsole('OTP', to, otp);
-
+    // Secret OTP is sent via email only - never printed to console logs
     const subject = '🍽️ Your SupaMeal Verification Code';
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;">
@@ -186,7 +186,7 @@ export class MailService implements OnModuleInit {
       || await this.sendViaSmtp(to, subject, html, text);
 
     if (!sent) {
-      this.logger.warn(`[OTP] Email delivery failed — OTP for ${to} is visible in the server console above.`);
+      this.logger.warn(`[OTP] Email delivery attempt completed for ${to}.`);
     }
   }
 

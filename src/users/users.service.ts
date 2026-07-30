@@ -10,6 +10,10 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument, UserStatus } from './schema/user.schema';
 import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
+import { order, orderDocument } from 'src/orders/schema/order.schema';
+import { bookings, bookingsDocument, reviewsEnums } from 'src/bookings/schema/bookings.schema';
+import { review, reviewDocument } from 'src/reviews/schema/review.schema';
+import { notification, notificationDocument } from 'src/notifications/schema/notifications.schema';
 import * as bcrypt from 'bcryptjs';
 import { sanitizeUser } from 'src/common/utils/user-response.util';
 
@@ -20,6 +24,14 @@ export class UsersService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(restaurant.name)
     private readonly restaurantModel: Model<restaurantDocument>,
+    @InjectModel(order.name)
+    private readonly orderModel: Model<orderDocument>,
+    @InjectModel(bookings.name)
+    private readonly bookingsModel: Model<bookingsDocument>,
+    @InjectModel(review.name)
+    private readonly reviewModel: Model<reviewDocument>,
+    @InjectModel(notification.name)
+    private readonly notificationModel: Model<notificationDocument>,
   ) {}
 
   async findAll(role?: string, status?: string) {
@@ -122,6 +134,180 @@ export class UsersService {
     const deleted = await this.userModel.findByIdAndDelete(id);
     if (!deleted) throw new NotFoundException('User not found');
     return { message: 'User deleted' };
+  }
+
+  async getDashboardStats(userId: string) {
+    const user = await this.userModel.findById(userId).populate('favorites');
+    if (!user) throw new NotFoundException('User not found');
+
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const totalOrders = await this.orderModel.countDocuments({ customerId: userId });
+    const ordersThisMonthCount = await this.orderModel.countDocuments({
+      customerId: userId,
+      createdAt: { $gte: startOfMonth },
+    });
+
+    const bookingFilter: any = {
+      customerId: userId,
+      status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
+    };
+
+    const upcomingBookingsCount = await this.bookingsModel.countDocuments(bookingFilter);
+
+    const nextBookingDoc = await this.bookingsModel
+      .findOne(bookingFilter)
+      .sort({ bookingDate: 1 });
+
+    let nextBookingText = 'None';
+    if (nextBookingDoc) {
+      const d = new Date(nextBookingDoc.bookingDate);
+      const dayStr = d.toLocaleDateString('en-US', { weekday: 'short' });
+      nextBookingText = `Next: ${dayStr} ${nextBookingDoc.bookingTime}`;
+    }
+
+    const favoritesCount = user.favorites ? user.favorites.length : 0;
+    const favoriteRestaurants = await this.getFavorites(userId);
+
+    const userReviews = await this.reviewModel.find({ customerId: userId });
+    const reviewsCount = userReviews.length;
+    let avgRatingGiven: number | string = 0;
+    if (reviewsCount > 0) {
+      const sum = userReviews.reduce((acc, r) => acc + Number(r.rating || 0), 0);
+      avgRatingGiven = Number((sum / reviewsCount).toFixed(1));
+    } else {
+      avgRatingGiven = 'N/A';
+    }
+
+    const recentOrdersRaw = await this.orderModel
+      .find({ customerId: userId })
+      .populate('restaurantId', 'name')
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    const STATUS_LABELS: Record<string, string> = {
+      pending: 'Order Placed',
+      accepted: 'Accepted',
+      preparing: 'Preparing',
+      ready: 'Ready for Pickup',
+      'on-way': 'On the Way',
+      delivered: 'Delivered',
+      cancelled: 'Cancelled',
+      rejected: 'Rejected',
+    };
+
+    const recentOrders = recentOrdersRaw.map((o) => {
+      const rName =
+        typeof o.restaurantId === 'object' && o.restaurantId
+          ? (o.restaurantId as any).name
+          : 'Restaurant';
+      const itemsSummary = o.items.map((i) => `${i.qty}x ${i.name}`).join(', ');
+      const createdAt = (o as any).createdAt ? new Date((o as any).createdAt) : new Date();
+      return {
+        id: `#${o._id.toString().slice(-4).toUpperCase()}`,
+        rawId: o._id.toString(),
+        name: itemsSummary || rName,
+        restaurant: rName,
+        status: o.status,
+        statusLabel: STATUS_LABELS[o.status] || o.status,
+        price: `$${o.total.toFixed(2)}`,
+        time: createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      };
+    });
+
+    const upcomingBookingsRaw = await this.bookingsModel
+      .find({ customerId: userId })
+      .populate('restaurantId', 'name')
+      .sort({ createdAt: -1 })
+      .limit(3);
+
+    const upcomingBookings = upcomingBookingsRaw.map((b) => {
+      const rName =
+        typeof b.restaurantId === 'object' && b.restaurantId
+          ? (b.restaurantId as any).name
+          : 'Restaurant';
+      return {
+        id: b._id.toString(),
+        restaurant: rName,
+        date: new Date(b.bookingDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+        time: b.bookingTime,
+        guests: b.guests,
+        status: b.status,
+      };
+    });
+
+    const notificationsRaw = await this.notificationModel
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    const notifications = notificationsRaw.map((n) => {
+      const createdAt = (n as any).createdAt ? new Date((n as any).createdAt) : new Date();
+      return {
+        id: n._id.toString(),
+        text: n.message,
+        title: n.title,
+        time: createdAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        unread: !n.isRead,
+      };
+    });
+
+    const activities: Array<{ id: string; user: string; action: string; time: string; avatar: string }> = [];
+    if (recentOrders.length > 0) {
+      const latestOrder = recentOrders[0];
+      activities.push({
+        id: `act-order-${latestOrder.rawId}`,
+        user: 'You',
+        action: `Placed order ${latestOrder.id} (${latestOrder.price})`,
+        time: latestOrder.time,
+        avatar: 'Y',
+      });
+    }
+    if (upcomingBookings.length > 0) {
+      const latestBooking = upcomingBookings[0];
+      activities.push({
+        id: `act-booking-${latestBooking.id}`,
+        user: 'You',
+        action: `Booked table at ${latestBooking.restaurant}`,
+        time: latestBooking.date,
+        avatar: 'B',
+      });
+    }
+    if (favoriteRestaurants.length > 0) {
+      activities.push({
+        id: `act-fav-${favoriteRestaurants[0].id}`,
+        user: 'You',
+        action: `Saved ${favoriteRestaurants[0].name} to favorites`,
+        time: 'Recently',
+        avatar: 'F',
+      });
+    }
+    if (activities.length === 0) {
+      activities.push({
+        id: 'act-init',
+        user: 'System',
+        action: 'Account registered & active',
+        time: 'Just now',
+        avatar: 'S',
+      });
+    }
+
+    return {
+      totalOrders,
+      ordersThisMonth: `+${ordersThisMonthCount} this month`,
+      upcomingBookingsCount,
+      nextBookingText,
+      favoritesCount,
+      avgRatingGiven,
+      reviewsCount,
+      recentOrders,
+      upcomingBookings,
+      favoriteRestaurants,
+      notifications,
+      activities,
+    };
   }
 
   private formatUser(user: UserDocument) {

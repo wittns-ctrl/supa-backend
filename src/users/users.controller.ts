@@ -53,6 +53,12 @@ export class UsersController {
     return this.usersService.removeFavorite(id, restaurantId);
   }
 
+  @Get(':id/dashboard-stats')
+  @UseGuards(JwtAuthGuard)
+  getDashboardStats(@Param('id') id: string) {
+    return this.usersService.getDashboardStats(id);
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   findOne(@Param('id') id: string) {

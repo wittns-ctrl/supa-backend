@@ -41,6 +41,11 @@ export class NotificationsService {
     return this.format(updated);
   }
 
+  async markAllRead(userId: string) {
+    await this.notificationModel.updateMany({ userId, isRead: false }, { isRead: true });
+    return { message: 'All notifications marked as read' };
+  }
+
   async remove(id: string, userId: string) {
     const deleted = await this.notificationModel.findById(id);
     if (!deleted) throw new NotFoundException('Notification not found');
