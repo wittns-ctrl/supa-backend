@@ -48,7 +48,6 @@ export class AuthService {
       if (existingUser.isVerified) {
         throw new BadRequestException('User already exists');
       }
-      // Unverified user attempting sign up again: update details & resend OTP
       const salt = await bcrypt.genSalt(10);
       existingUser.password = await bcrypt.hash(signupdto.password, salt);
       existingUser.name = signupdto.name || existingUser.name;
@@ -101,7 +100,6 @@ export class AuthService {
     }
 
     await this.mailservice.sendOtpEmail(normalizedEmail, otp);
-
     return { message: 'open your email to check for the verification email' };
   }
 
@@ -153,6 +151,12 @@ export class AuthService {
       throw new UnauthorizedException('Please verify your email first');
     }
 
+      if (!user.password) {
+      throw new UnauthorizedException(
+        'This account uses social login. Please sign in with Google or Apple.',
+      );
+    }
+
     const isMatch = await bcrypt.compare(signinDto.password, user.password);
 
     if (!isMatch) {
@@ -187,8 +191,55 @@ export class AuthService {
     await user.save();
 
     await this.mailservice.sendOtpEmail(normalized, otp);
+    return { message: 'A new verification code has been sent. Check your email.' };
+  }
 
-    return { message: 'A new verification code has been sent. Check your email or the server console.' };
+  /**
+   * OAuth Sign-In: Find or create a user from an OAuth provider (Google, Apple, etc.)
+   * Identity is pre-verified by the provider — no OTP or password required.
+   */
+  async oauthSignIn(data: {
+    email: string;
+    name: string;
+    imageurl?: string;
+    provider: string;
+    providerId: string;
+  }) {
+    const normalizedEmail = this.normalizeEmail(data.email);
+    let user = await this.findUserByEmail(normalizedEmail);
+
+    if (user) {
+      // Link OAuth provider if this is their first OAuth login
+      if (!user.oauthProvider) {
+        user.oauthProvider = data.provider;
+        user.oauthProviderId = data.providerId;
+      }
+      if (!user.isVerified) {
+        user.isVerified = true;
+      }
+      // Set profile image from OAuth if user doesn't have one yet
+      if (data.imageurl && !user.profile?.imageurl) {
+        user.profile = { ...user.profile, imageurl: data.imageurl } as any;
+      }
+      await user.save();
+    } else {
+      // Create brand-new OAuth user — auto-verified, no password needed
+      user = await this.userModel.create({
+        name: data.name,
+        email: normalizedEmail,
+        role: roles.CUSTOMER,
+        isVerified: true,
+        oauthProvider: data.provider,
+        oauthProviderId: data.providerId,
+        profile: data.imageurl ? { imageurl: data.imageurl } : undefined,
+      });
+    }
+
+    const tokens = await this.generateTokens(user);
+    return {
+      ...tokens,
+      user: sanitizeUser(user),
+    };
   }
 
   private async generateTokens(user: UserDocument) {
@@ -226,7 +277,8 @@ export class AuthService {
 
     await user.save();
 
-    const link = `http://localhost:5173/reset-password?token=${resettoken}`;
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const link = `${frontendUrl}/reset-password?token=${resettoken}`;
     await this.mailservice.sendResetEmail(forgotDto.email, link);
 
     return { message: 'Reset link sent to the email' };
@@ -241,7 +293,10 @@ export class AuthService {
       throw new NotFoundException('user not found');
     }
 
-    if (!user.resetToken || (user.resetTokenExpiration && user.resetTokenExpiration < new Date())) {
+    if (
+      !user.resetToken ||
+      (user.resetTokenExpiration && user.resetTokenExpiration < new Date())
+    ) {
       throw new UnauthorizedException('token expired');
     }
 

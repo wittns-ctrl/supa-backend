@@ -66,6 +66,7 @@ export class UsersService {
   async changePassword(id: string, dto: ChangePasswordDto) {
     const user = await this.userModel.findById(id);
     if (!user) throw new NotFoundException('User not found');
+    if (!user.password) throw new BadRequestException('No password set for this account (social login). Use the provider to sign in or request a password reset first.');
 
     const match = await bcrypt.compare(dto.currentPassword, user.password);
     if (!match) throw new UnauthorizedException('Current password is incorrect');

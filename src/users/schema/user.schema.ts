@@ -42,13 +42,13 @@ export class User {
   name!: string;
   @Prop({ required: true, unique: true })
   email!: string;
-  @Prop({ required: true })
-  password!: string;
-  @Prop({ required: true })
-  phone!: Number;
-  @Prop({ type: String, enum: Object.values(roles), required: true })
+  @Prop()
+  password?: string;
+  @Prop()
+  phone?: Number;
+  @Prop({ type: String, enum: Object.values(roles), required: true, default: roles.CUSTOMER })
   role!: roles;
-  @Prop({ required: true })
+  @Prop({ required: true, default: false })
   isVerified!: boolean;
   @Prop({ type: String, enum: Object.values(UserStatus), default: UserStatus.ACTIVE })
   status!: UserStatus;
@@ -68,6 +68,12 @@ export class User {
   deliveryAddress?: DeliveryAddress;
   @Prop({ type: [{ type: Types.ObjectId, ref: 'restaurant' }], default: [] })
   favorites!: Types.ObjectId[];
+  // OAuth fields
+  @Prop()
+  oauthProvider?: string;
+  @Prop()
+  oauthProviderId?: string;
 }
 
 export const Userschema = SchemaFactory.createForClass(User);
+
