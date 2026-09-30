@@ -12,15 +12,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     configService: ConfigService,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {
+    const secret = configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      // Never fall back to a default secret — an unconfigured secret would let
+      // anyone forge tokens. validateEnv normally catches this at boot.
+      throw new Error('JWT_SECRET is not configured — refusing to start');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') || 'default_secret',
+      secretOrKey: secret,
     });
   }
 
   async validate(payload: { sub: string; email: string; role: string }) {
-    const user = await this.userModel.findById(payload.sub).select('-password -refreshToken');
+    const user = await this.userModel
+      .findById(payload.sub)
+      .select('-password -refreshToken');
     if (!user) throw new UnauthorizedException('User not found');
     if (user.status === UserStatus.BLOCKED) {
       throw new UnauthorizedException('Account is blocked');
