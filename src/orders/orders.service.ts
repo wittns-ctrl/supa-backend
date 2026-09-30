@@ -13,6 +13,10 @@ import { restaurant, restaurantDocument } from 'src/restaurants/schema/restauran
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { Payments, payment, paymentDocument } from 'src/payments/schema/payments.schema';
 import { randomUUID } from 'crypto';
+import { roles } from 'src/users/schema/user.schema';
+import { PromosService } from 'src/promos/promos.service';
+import { PromoDiscountType } from 'src/promos/schema/promo.schema';
+import { OrderEventsService } from './order-events.service';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Order Placed',
@@ -33,6 +37,33 @@ const DEFAULT_TIMELINE = [
   { key: 'delivered', label: 'Delivered', done: false },
 ];
 
+/**
+ * Allowed order status transitions. This is the order state machine — it
+ * prevents owners/customers from skipping or reversing states arbitrarily
+ * (e.g. pending → delivered without any kitchen steps).
+ */
+const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  [OrderStatus.PENDING]: [OrderStatus.ACCEPTED, OrderStatus.REJECTED, OrderStatus.CANCELLED],
+  [OrderStatus.ACCEPTED]: [OrderStatus.PREPARING, OrderStatus.CANCELLED, OrderStatus.REJECTED],
+  [OrderStatus.PREPARING]: [OrderStatus.READY, OrderStatus.CANCELLED],
+  [OrderStatus.READY]: [OrderStatus.ON_WAY, OrderStatus.CANCELLED],
+  [OrderStatus.ON_WAY]: [OrderStatus.DELIVERED],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.CANCELLED]: [],
+  [OrderStatus.REJECTED]: [],
+};
+
+const CUSTOMER_ALLOWED = new Set([OrderStatus.CANCELLED]);
+const OWNER_ALLOWED = new Set([
+  OrderStatus.ACCEPTED,
+  OrderStatus.REJECTED,
+  OrderStatus.PREPARING,
+  OrderStatus.READY,
+  OrderStatus.ON_WAY,
+  OrderStatus.DELIVERED,
+  OrderStatus.CANCELLED,
+]);
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -41,44 +72,85 @@ export class OrdersService {
     @InjectModel(restaurant.name) private restaurantModel: Model<restaurantDocument>,
     @InjectModel(payment.name) private paymentModel: Model<paymentDocument>,
     private notificationsService: NotificationsService,
+    private promosService: PromosService,
+    private readonly orderEvents: OrderEventsService,
   ) {}
 
-  async create(dto: CreateOrderDto) {
+  async create(
+    dto: CreateOrderDto,
+    userId?: string,
+    userRole?: string,
+  ) {
+    if (userRole === roles.CUSTOMER && userId) {
+      dto.customerId = userId;
+    }
     if (!dto.items?.length) {
       throw new BadRequestException('Order must have at least one item');
+    }
+    if (!dto.restaurantId || !Types.ObjectId.isValid(dto.restaurantId)) {
+      throw new BadRequestException('Invalid restaurant id');
+    }
+    if (!dto.customerId || !Types.ObjectId.isValid(dto.customerId)) {
+      throw new BadRequestException('Invalid customer id');
     }
 
     const orderItems: { menuItemId: Types.ObjectId; name: string; qty: number; price: number }[] = [];
     let subtotal = 0;
 
     for (const item of dto.items) {
+      if (!item.menuItemId || !Types.ObjectId.isValid(item.menuItemId)) {
+        throw new BadRequestException(`Invalid menu item id: ${item.menuItemId}`);
+      }
+      const qty = Number(item.qty);
+      if (!Number.isInteger(qty) || qty < 1 || qty > 100) {
+        throw new BadRequestException('Item quantity must be between 1 and 100');
+      }
       const menuItem = await this.menuModel.findById(item.menuItemId);
       if (!menuItem) throw new NotFoundException(`Menu item ${item.menuItemId} not found`);
       if (!menuItem.isAvailable) {
         throw new BadRequestException(`${menuItem.name} is not available`);
       }
+      // Guard against cross-restaurant carts: every item must belong to the
+      // restaurant the order is being placed with.
+      if (menuItem.restaurant?.toString() !== dto.restaurantId) {
+        throw new BadRequestException(
+          `${menuItem.name} does not belong to the selected restaurant`,
+        );
+      }
       orderItems.push({
         menuItemId: menuItem._id,
         name: menuItem.name,
-        qty: item.qty,
+        qty,
         price: Number(menuItem.price),
       });
-      subtotal += Number(menuItem.price) * item.qty;
+      subtotal += Number(menuItem.price) * qty;
     }
 
     let discount = 0;
-    if (dto.promoCode?.toUpperCase() === 'SUPA10') {
-      discount = 5;
+    let appliedPromoId: Types.ObjectId | null = null;
+    let appliedDiscountType: PromoDiscountType | null = null;
+    if (dto.promoCode) {
+      const promoResult = await this.promosService.validateCode(dto.promoCode, subtotal);
+      if (promoResult.valid) {
+        discount = promoResult.discount;
+        appliedDiscountType = (promoResult as any).discountType ?? null;
+        appliedPromoId = (promoResult as any).promoId
+          ? new Types.ObjectId((promoResult as any).promoId)
+          : null;
+      }
     }
 
     const deliveryFee = 3.99;
-    const total = subtotal + deliveryFee - discount;
+    const total = Math.max(0, Math.round((subtotal + deliveryFee - discount) * 100) / 100);
 
+    const nowIso = new Date().toISOString();
+    const placedAt = new Date(nowIso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
     const timeline = DEFAULT_TIMELINE.map((step, i) => ({
       ...step,
-      time: i === 0 ? new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : undefined,
+      time: i === 0 ? placedAt : undefined,
       done: i === 0,
     }));
+    void nowIso;
 
     const created = await this.orderModel.create({
       customerId: dto.customerId,
@@ -95,6 +167,16 @@ export class OrdersService {
       eta: '25-35 min',
       timeline,
     });
+
+    if (appliedPromoId && discount > 0) {
+      // Atomic, guarded increment — a promo at its usage limit can no longer
+      // be consumed even under concurrent orders.
+      try {
+        await this.promosService.incrementUsageSafe(appliedPromoId);
+      } catch (_err) {
+        // ignore — order already placed, promo tracking is secondary
+      }
+    }
 
     await this.paymentModel.create({
       orderId: created._id,
@@ -121,18 +203,52 @@ export class OrdersService {
     return this.formatOrder(created, restaurantDoc?.name);
   }
 
-  async findAll(customerId?: string, restaurantId?: string) {
+  async findAll(
+    customerId?: string,
+    restaurantId?: string,
+    userId?: string,
+    userRole?: string,
+    page = 1,
+    limit = 20,
+  ) {
+    // Server-side scoping: customers can only ever see their own orders and
+    // owners only their restaurants' orders, enforced in the DB query itself.
     const filter: Record<string, unknown> = {};
-    if (customerId) filter.customerId = customerId;
-    if (restaurantId) filter.restaurantId = restaurantId;
 
-    const orders = await this.orderModel
-      .find(filter)
-      .populate('restaurantId', 'name')
-      .populate('customerId', 'name email')
-      .sort({ createdAt: -1 });
+    if (userRole === roles.ADMIN) {
+      if (customerId) filter.customerId = customerId;
+      if (restaurantId) filter.restaurantId = restaurantId;
+    } else if (userRole === roles.OWNER) {
+      const owned = await this.restaurantModel.find({ ownerId: userId }).select('_id');
+      const ownedIds = owned.map((r) => r._id);
+      if (restaurantId) {
+        if (!ownedIds.some((id) => id.toString() === restaurantId)) {
+          throw new UnauthorizedException('You are not authorized to view these orders');
+        }
+        filter.restaurantId = restaurantId;
+      } else {
+        filter.restaurantId = { $in: ownedIds };
+      }
+      if (customerId) filter.customerId = customerId;
+    } else {
+      filter.customerId = userId;
+    }
 
-    return Promise.all(
+    const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+    const safePage = Math.max(Number(page) || 1, 1);
+
+    const [orders, totalCount] = await Promise.all([
+      this.orderModel
+        .find(filter)
+        .populate('restaurantId', 'name ownerId')
+        .populate('customerId', 'name email')
+        .sort({ createdAt: -1 })
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit),
+      this.orderModel.countDocuments(filter),
+    ]);
+
+    const formatted = await Promise.all(
       orders.map((o) => {
         const rName =
           typeof o.restaurantId === 'object'
@@ -141,14 +257,45 @@ export class OrdersService {
         return this.formatOrder(o, rName);
       }),
     );
+
+    return {
+      data: formatted,
+      pagination: {
+        page: safePage,
+        limit: safeLimit,
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / safeLimit),
+      },
+    };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, userId?: string, userRole?: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid order id');
+    }
     const found = await this.orderModel
       .findById(id)
-      .populate('restaurantId', 'name')
+      .populate('restaurantId', 'name ownerId')
       .populate('customerId', 'name email phone');
     if (!found) throw new NotFoundException('Order not found');
+
+    const ownerId =
+      typeof found.restaurantId === 'object'
+        ? (found.restaurantId as { ownerId?: Types.ObjectId }).ownerId?.toString()
+        : undefined;
+    const customerId =
+      typeof found.customerId === 'object'
+        ? (found.customerId as { _id?: Types.ObjectId })._id?.toString()
+        : String(found.customerId);
+
+    if (userRole === roles.OWNER && (!userId || ownerId !== userId)) {
+      throw new UnauthorizedException('You are not authorized to view this order');
+    } else if (userRole === roles.CUSTOMER && (!userId || customerId !== userId)) {
+      throw new UnauthorizedException('You are not authorized to view this order');
+    } else if (userRole !== roles.ADMIN && userRole !== roles.OWNER && userRole !== roles.CUSTOMER) {
+      throw new UnauthorizedException('You are not authorized to view this order');
+    }
+
     const rName =
       typeof found.restaurantId === 'object'
         ? (found.restaurantId as { name?: string }).name
@@ -156,8 +303,8 @@ export class OrdersService {
     return this.formatOrder(found, rName);
   }
 
-  async getTracking(id: string) {
-    const orderDoc = await this.findOne(id);
+  async getTracking(id: string, userId?: string, userRole?: string) {
+    const orderDoc = await this.findOne(id, userId, userRole);
     return {
       ...orderDoc,
       updates: [
@@ -166,7 +313,73 @@ export class OrdersService {
     };
   }
 
-  async updateStatus(id: string, status: OrderStatus) {
+  async updateStatus(
+    id: string,
+    status: OrderStatus,
+    userId?: string,
+    userRole?: string,
+  ) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid order id');
+    }
+    if (!status || !Object.values(OrderStatus).includes(status)) {
+      throw new BadRequestException('Invalid status value');
+    }
+
+    const populated = await this.orderModel
+      .findById(id)
+      .populate('restaurantId', 'name ownerId')
+      .populate('customerId', 'name')
+      .exec();
+
+    if (!populated) throw new NotFoundException('Order not found');
+
+    const ownerId =
+      typeof populated.restaurantId === 'object'
+        ? (populated.restaurantId as { ownerId?: Types.ObjectId }).ownerId?.toString()
+        : undefined;
+
+    if (userRole !== roles.ADMIN) {
+      if (userRole === roles.CUSTOMER) {
+        const customerId =
+          typeof populated.customerId === 'object'
+            ? (populated.customerId as { _id?: Types.ObjectId })._id?.toString()
+            : String(populated.customerId);
+        const allowedSelfCancel =
+          status === OrderStatus.CANCELLED &&
+          (populated.status === OrderStatus.PENDING ||
+            populated.status === OrderStatus.ACCEPTED);
+        if (!allowedSelfCancel || customerId !== userId) {
+          throw new UnauthorizedException(
+            'You are not authorized to update this order',
+          );
+        }
+      } else if (userRole === roles.OWNER) {
+        if (!userId || ownerId !== userId) {
+          throw new UnauthorizedException(
+            'You are not authorized to update this order',
+          );
+        }
+        if (!OWNER_ALLOWED.has(status)) {
+          throw new BadRequestException(
+            `Restaurants cannot set order status to "${status}"`,
+          );
+        }
+      } else {
+        throw new UnauthorizedException(
+          'You are not authorized to update this order',
+        );
+      }
+    }
+
+    // State machine: reject illegal transitions regardless of role
+    const allowedFrom = ALLOWED_TRANSITIONS[populated.status] || [];
+    if (populated.status !== status && !allowedFrom.includes(status)) {
+      throw new BadRequestException(
+        `Cannot change order status from "${populated.status}" to "${status}"`,
+      );
+    }
+
     const timeline = this.buildTimelineForStatus(status);
     const updated = await this.orderModel
       .findByIdAndUpdate(id, { status, timeline, eta: this.getEta(status) }, { new: true })
@@ -185,10 +398,16 @@ export class OrdersService {
       message: `Your order is now: ${STATUS_LABELS[status] || status}`,
     });
 
+    // Live push to any open SSE tracking streams for this order
+    this.orderEvents.emit(id, status, updated.eta);
+
     return this.formatOrder(updated);
   }
 
   async reorder(id: string, customerId: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid order id');
+    }
     const original = await this.orderModel.findById(id);
     if (!original) throw new NotFoundException('Order not found');
 
@@ -210,7 +429,6 @@ export class OrdersService {
   }
 
   private buildTimelineForStatus(status: OrderStatus) {
-    const statusOrder = ['placed', 'confirmed', 'preparing', 'on-way', 'delivered'];
     const statusToStep: Record<string, number> = {
       pending: 0,
       accepted: 1,
@@ -226,7 +444,7 @@ export class OrdersService {
       ...step,
       done: i <= activeIndex,
       time: i <= activeIndex
-        ? new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+        ? new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
         : undefined,
     }));
   }
@@ -283,7 +501,8 @@ export class OrdersService {
       status: obj.status,
       statusLabel: STATUS_LABELS[obj.status] || obj.status,
       eta: obj.eta,
-      rider: obj.rider || 'Alex (Driver)',
+      // No fake rider names — rider assignment is a real feature, not a mock
+      rider: obj.rider || null,
       timeline: obj.timeline,
       createdAt: obj.createdAt,
     };

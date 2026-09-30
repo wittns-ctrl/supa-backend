@@ -54,9 +54,9 @@ export type orderDocument = order & Document;
 
 @Schema({ timestamps: true })
 export class order {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   customerId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'restaurant', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'restaurant', required: true, index: true })
   restaurantId!: Types.ObjectId;
   @Prop({ type: [OrderItem], required: true })
   items!: OrderItem[];
@@ -74,7 +74,7 @@ export class order {
   discount!: number;
   @Prop({ required: true })
   total!: number;
-  @Prop({ type: String, enum: Object.values(OrderStatus), default: OrderStatus.PENDING })
+  @Prop({ type: String, enum: Object.values(OrderStatus), default: OrderStatus.PENDING, index: true })
   status!: OrderStatus;
   @Prop({ default: '25-35 min' })
   eta!: string;
@@ -85,3 +85,7 @@ export class order {
 }
 
 export const orderSchema = SchemaFactory.createForClass(order);
+
+orderSchema.index({ customerId: 1, createdAt: -1 });
+orderSchema.index({ restaurantId: 1, createdAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
