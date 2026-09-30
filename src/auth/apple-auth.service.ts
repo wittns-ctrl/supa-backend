@@ -43,7 +43,7 @@ export class AppleAuthService {
     return this.getConfig() !== null;
   }
 
-  getAuthorizationUrl(state?: string): string {
+  getAuthorizationUrl(state = 'supameal'): string {
     const config = this.getConfig();
     if (!config) {
       throw new Error('Apple Sign In is not configured');

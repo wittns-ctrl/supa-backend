@@ -11,6 +11,7 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { MailService } from 'src/mail/mail.service';
+import { OAuthStateService } from './oauth-state.service';
 
 @Module({
   imports: [
@@ -31,7 +32,7 @@ import { MailService } from 'src/mail/mail.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AppleAuthService, JwtStrategy, GoogleStrategy, MailService],
+  providers: [AuthService, AppleAuthService, JwtStrategy, GoogleStrategy, MailService, OAuthStateService],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}
