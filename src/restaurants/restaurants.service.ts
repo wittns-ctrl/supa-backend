@@ -13,7 +13,15 @@ import {
   RestaurantStatus,
 } from './schema/restaurant.schema';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument } from 'src/users/schema/user.schema';
+import { User, UserDocument, roles } from 'src/users/schema/user.schema';
+
+/**
+ * Escapes user input before interpolation into $regex — prevents ReDoS and
+ * regex injection against MongoDB.
+ */
+export function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 import { order, orderDocument } from 'src/orders/schema/order.schema';
 import { bookings, bookingsDocument } from 'src/bookings/schema/bookings.schema';
 import { menu, menuDocument } from 'src/menus/schema/menu.schema';
@@ -78,23 +86,27 @@ export class RestaurantsService {
     }
 
     if (query.search) {
+      const safe = escapeRegExp(query.search.slice(0, 100));
       filter.$or = [
-        { name: { $regex: query.search, $options: 'i' } },
-        { cuisine: { $regex: query.search, $options: 'i' } },
-        { description: { $regex: query.search, $options: 'i' } },
+        { name: { $regex: safe, $options: 'i' } },
+        { cuisine: { $regex: safe, $options: 'i' } },
+        { description: { $regex: safe, $options: 'i' } },
       ];
     }
 
     if (query.cuisine) {
-      filter.cuisine = { $regex: query.cuisine, $options: 'i' };
+      filter.cuisine = { $regex: escapeRegExp(query.cuisine.slice(0, 100)), $options: 'i' };
     }
 
     if (query.location) {
-      filter['location.city'] = { $regex: query.location, $options: 'i' };
+      filter['location.city'] = { $regex: escapeRegExp(query.location.slice(0, 100)), $options: 'i' };
     }
 
     if (query.rating) {
-      filter.rating = { $gte: Number(query.rating) };
+      const rating = Number(query.rating);
+      if (!Number.isNaN(rating) && rating >= 0 && rating <= 5) {
+        filter.rating = { $gte: rating };
+      }
     }
 
     const restaurants = await this.restaurantModel
@@ -128,7 +140,11 @@ export class RestaurantsService {
     return restaurants.map((r) => this.formatRestaurant(r));
   }
 
-  async update(id: string, updateRestaurantDto: UpdateRestaurantDto) {
+  async update(id: string, updateRestaurantDto: UpdateRestaurantDto, userId?: string, userRole?: string) {
+    const existing = await this.restaurantModel.findById(id);
+    if (!existing) throw new NotFoundException('Restaurant not found');
+    this.assertOwnerOrAdmin(existing.ownerId, userId, userRole);
+
     const updated = await this.restaurantModel
       .findByIdAndUpdate(id, updateRestaurantDto, { new: true })
       .populate('ownerId', 'name email');
@@ -143,7 +159,11 @@ export class RestaurantsService {
     return { message: 'Restaurant deleted' };
   }
 
-  async addImages(id: string, images: string[]) {
+  async addImages(id: string, images: string[], userId?: string, userRole?: string) {
+    const existing = await this.restaurantModel.findById(id);
+    if (!existing) throw new NotFoundException('Restaurant not found');
+    this.assertOwnerOrAdmin(existing.ownerId, userId, userRole);
+
     const updated = await this.restaurantModel.findByIdAndUpdate(
       id,
       { $push: { images: { $each: images } } },
@@ -153,7 +173,11 @@ export class RestaurantsService {
     return this.formatRestaurant(updated);
   }
 
-  async removeImage(id: string, imageUrl: string) {
+  async removeImage(id: string, imageUrl: string, userId?: string, userRole?: string) {
+    const existing = await this.restaurantModel.findById(id);
+    if (!existing) throw new NotFoundException('Restaurant not found');
+    this.assertOwnerOrAdmin(existing.ownerId, userId, userRole);
+
     const updated = await this.restaurantModel.findByIdAndUpdate(
       id,
       { $pull: { images: imageUrl } },
@@ -187,42 +211,160 @@ export class RestaurantsService {
     return this.formatRestaurant(updated);
   }
 
-  async getAnalyticsOverview(id: string) {
+  async getAnalyticsOverview(
+    id: string,
+    userId?: string,
+    userRole?: string,
+  ) {
+    const restaurant = await this.restaurantModel.findById(id);
+    if (!restaurant) throw new NotFoundException('Restaurant not found');
+    this.assertOwnerOrAdmin(restaurant.ownerId, userId, userRole);
+
     const restaurantId = new Types.ObjectId(id);
     const orders = await this.orderModel.find({ restaurantId });
     const bookings = await this.bookingsModel.find({ restaurantId });
     const revenue = orders
       .filter((o) => o.status === 'delivered')
-      .reduce((sum, o) => sum + o.total, 0);
+      .reduce((sum, o) => sum + Number(o.total || 0), 0);
 
     return {
       totalOrders: orders.length,
       totalBookings: bookings.length,
-      revenue,
-      rating: (await this.restaurantModel.findById(id))?.rating || 0,
+      revenue: Math.round(revenue * 100) / 100,
+      rating: restaurant.rating || 0,
       pendingOrders: orders.filter((o) => o.status === 'pending').length,
     };
   }
 
-  async getRevenueChart(id: string, period = 'week') {
+  async getRevenueChart(
+    id: string,
+    period = 'week',
+    userId?: string,
+    userRole?: string,
+  ) {
+    const restaurant = await this.restaurantModel.findById(id);
+    if (!restaurant) throw new NotFoundException('Restaurant not found');
+    this.assertOwnerOrAdmin(restaurant.ownerId, userId, userRole);
+
     const days = period === 'month' ? 30 : 7;
-    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const data = labels.map((label, i) => ({
-      label,
-      value: Math.floor(Math.random() * 500) + 100 + i * 20,
-    }));
-    return data.slice(0, period === 'month' ? 30 : 7);
+    const restaurantId = new Types.ObjectId(id);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days + 1);
+    startDate.setHours(0, 0, 0, 0);
+
+    const pipeline: any[] = [
+      {
+        $match: {
+          restaurantId,
+          status: 'delivered',
+          createdAt: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+          },
+          total: { $sum: { $toDouble: '$total' } },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const results = await this.orderModel.aggregate(pipeline).exec();
+    const byDate: Record<string, number> = {};
+    for (const r of results) {
+      byDate[r._id] = Number(r.total) || 0;
+    }
+
+    const labels = period === 'month'
+      ? Array.from({ length: days }, (_, i) => {
+          const d = new Date(startDate);
+          d.setDate(d.getDate() + i);
+          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        })
+      : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    const data = Array.from({ length: days }, (_, i) => {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      const raw = byDate[key] || 0;
+      return {
+        label: period === 'month' ? labels[i] : labels[(d.getDay() + 6) % 7],
+        value: Math.round(raw * 100) / 100,
+      };
+    });
+
+    return data;
   }
 
-  async getPeakHours(id: string) {
-    return [
-      { hour: '11 AM', count: 12 },
-      { hour: '12 PM', count: 28 },
-      { hour: '1 PM', count: 35 },
-      { hour: '6 PM', count: 42 },
-      { hour: '7 PM', count: 55 },
-      { hour: '8 PM', count: 48 },
+  async getPeakHours(
+    id: string,
+    userId?: string,
+    userRole?: string,
+  ) {
+    const restaurant = await this.restaurantModel.findById(id);
+    if (!restaurant) throw new NotFoundException('Restaurant not found');
+    this.assertOwnerOrAdmin(restaurant.ownerId, userId, userRole);
+
+    const restaurantId = new Types.ObjectId(id);
+    const now = new Date();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const orderPipeline: any[] = [
+      {
+        $match: {
+          restaurantId,
+          status: { $in: ['delivered', 'accepted', 'preparing', 'ready', 'on-way'] },
+          createdAt: { $gte: thirtyDaysAgo, $lte: now },
+        },
+      },
+      {
+        $group: {
+          _id: { $hour: '$createdAt' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: 6 },
     ];
+
+    const hourData = await this.orderModel.aggregate(orderPipeline).exec();
+
+    const formatHour = (h: number): string => {
+      if (h === 0) return '12 AM';
+      if (h < 12) return `${h} AM`;
+      if (h === 12) return '12 PM';
+      return `${h - 12} PM`;
+    };
+
+    const result = hourData
+      .map((r) => ({ hour: formatHour(r._id), count: Number(r.count || 0) }))
+      .filter((r) => r.count > 0);
+
+    if (result.length === 0) {
+      return [
+        { hour: '11 AM', count: 0 },
+        { hour: '12 PM', count: 0 },
+        { hour: '6 PM', count: 0 },
+        { hour: '7 PM', count: 0 },
+      ];
+    }
+    return result;
+  }
+
+  private assertOwnerOrAdmin(
+    ownerId: Types.ObjectId | string | undefined,
+    userId?: string,
+    userRole?: string,
+  ): void {
+    if (userRole === roles.ADMIN) return;
+    const ownerStr =
+      ownerId instanceof Types.ObjectId ? ownerId.toString() : typeof ownerId === 'string' ? ownerId : undefined;
+    if (userRole === roles.OWNER && ownerStr && ownerStr === userId) return;
+    throw new UnauthorizedException('You are not authorized to modify this restaurant');
   }
 
   private formatRestaurant(r: restaurantDocument) {

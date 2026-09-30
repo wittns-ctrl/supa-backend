@@ -17,6 +17,7 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { roles, UserStatus } from './schema/user.schema';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
+import { SetUserStatusDto } from './dto/set-status.dto';
 
 @Controller('users')
 export class UsersController {
@@ -31,8 +32,11 @@ export class UsersController {
 
   @Get(':id/favorites')
   @UseGuards(JwtAuthGuard)
-  getFavorites(@Param('id') id: string) {
-    return this.usersService.getFavorites(id);
+  getFavorites(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.usersService.getFavorites(id, user.id, user.role);
   }
 
   @Post(':id/favorites/:restaurantId')
@@ -40,8 +44,9 @@ export class UsersController {
   addFavorite(
     @Param('id') id: string,
     @Param('restaurantId') restaurantId: string,
+    @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.usersService.addFavorite(id, restaurantId);
+    return this.usersService.addFavorite(id, restaurantId, user.id, user.role);
   }
 
   @Delete(':id/favorites/:restaurantId')
@@ -49,39 +54,54 @@ export class UsersController {
   removeFavorite(
     @Param('id') id: string,
     @Param('restaurantId') restaurantId: string,
+    @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.usersService.removeFavorite(id, restaurantId);
+    return this.usersService.removeFavorite(id, restaurantId, user.id, user.role);
   }
 
   @Get(':id/dashboard-stats')
   @UseGuards(JwtAuthGuard)
-  getDashboardStats(@Param('id') id: string) {
-    return this.usersService.getDashboardStats(id);
+  getDashboardStats(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.usersService.getDashboardStats(id, user.id, user.role);
   }
 
   @Get(':id')
   @UseGuards(JwtAuthGuard)
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.usersService.findOne(id, user.id, user.role);
   }
 
   @Patch(':id/password')
   @UseGuards(JwtAuthGuard)
-  changePassword(@Param('id') id: string, @Body() dto: ChangePasswordDto) {
-    return this.usersService.changePassword(id, dto);
+  changePassword(
+    @Param('id') id: string,
+    @Body() dto: ChangePasswordDto,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.usersService.changePassword(id, dto, user.id, user.role);
   }
 
   @Patch(':id/status')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(roles.ADMIN)
-  setStatus(@Param('id') id: string, @Body() body: { status: UserStatus }) {
+  setStatus(@Param('id') id: string, @Body() body: SetUserStatusDto) {
     return this.usersService.setStatus(id, body.status);
   }
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard)
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(id, updateUserDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.usersService.update(id, updateUserDto, user.id, user.role);
   }
 
   @Delete(':id')

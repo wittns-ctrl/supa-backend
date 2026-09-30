@@ -8,6 +8,10 @@ import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.
 import { payment, paymentschema } from 'src/payments/schema/payments.schema';
 import { NotificationsModule } from 'src/notifications/notifications.module';
 import { AuthModule } from 'src/auth/auth.module';
+import { PromosModule } from 'src/promos/promos.module';
+import { OrderEventsService } from './order-events.service';
+import { SseTicketsService } from './sse-tickets.service';
+import { OrderEventsController } from './order-events.controller';
 
 @Module({
   imports: [
@@ -19,9 +23,10 @@ import { AuthModule } from 'src/auth/auth.module';
     ]),
     NotificationsModule,
     AuthModule,
+    PromosModule,
   ],
-  controllers: [OrdersController],
-  providers: [OrdersService],
-  exports: [OrdersService],
+  controllers: [OrdersController, OrderEventsController],
+  providers: [OrdersService, OrderEventsService, SseTicketsService],
+  exports: [OrdersService, OrderEventsService],
 })
 export class OrdersModule {}

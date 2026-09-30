@@ -19,6 +19,8 @@ import { Roles } from 'src/common/decorators/roles.decorator';
 import { roles } from 'src/users/schema/user.schema';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { RestaurantStatus } from './schema/restaurant.schema';
+import { SetRestaurantStatusDto, ApproveRestaurantDto } from './dto/set-status.dto';
+import { AddImagesDto } from './dto/add-images.dto';
 
 @Controller('restaurants')
 export class RestaurantsController {
@@ -26,7 +28,17 @@ export class RestaurantsController {
 
   @Post('register')
   @UseGuards(JwtAuthGuard)
-  create(@Body() createRestaurantDto: CreateRestaurantDto) {
+  create(
+    @Body() createRestaurantDto: CreateRestaurantDto,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    if (user.role === roles.OWNER) {
+      createRestaurantDto.ownerId = user.id;
+    } else if (user.role !== roles.ADMIN) {
+      throw new UnauthorizedException(
+        'Only restaurant owners or administrators can register restaurants',
+      );
+    }
     return this.restaurantsService.createRestaurant(createRestaurantDto);
   }
 
@@ -59,8 +71,11 @@ export class RestaurantsController {
   @Get(':id/analytics/overview')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(roles.OWNER, roles.ADMIN)
-  analyticsOverview(@Param('id') id: string) {
-    return this.restaurantsService.getAnalyticsOverview(id);
+  analyticsOverview(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.restaurantsService.getAnalyticsOverview(id, user.id, user.role);
   }
 
   @Get(':id/analytics/revenue')
@@ -69,15 +84,19 @@ export class RestaurantsController {
   analyticsRevenue(
     @Param('id') id: string,
     @Query('period') period?: string,
+    @CurrentUser() user?: { id: string; role: string },
   ) {
-    return this.restaurantsService.getRevenueChart(id, period);
+    return this.restaurantsService.getRevenueChart(id, period, user?.id, user?.role);
   }
 
   @Get(':id/analytics/peak-hours')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(roles.OWNER, roles.ADMIN)
-  analyticsPeakHours(@Param('id') id: string) {
-    return this.restaurantsService.getPeakHours(id);
+  analyticsPeakHours(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.restaurantsService.getPeakHours(id, user.id, user.role);
   }
 
   @Get(':id')
@@ -90,7 +109,7 @@ export class RestaurantsController {
   @Roles(roles.ADMIN)
   approve(
     @Param('id') id: string,
-    @Body() body: { approved: boolean; rejectionReason?: string },
+    @Body() body: ApproveRestaurantDto,
   ) {
     return this.restaurantsService.approve(id, body.approved, body.rejectionReason);
   }
@@ -98,22 +117,30 @@ export class RestaurantsController {
   @Patch(':id/status')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(roles.ADMIN)
-  setStatus(@Param('id') id: string, @Body() body: { status: RestaurantStatus }) {
+  setStatus(@Param('id') id: string, @Body() body: SetRestaurantStatusDto) {
     return this.restaurantsService.setStatus(id, body.status);
   }
 
   @Post(':id/images')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(roles.OWNER, roles.ADMIN)
-  addImages(@Param('id') id: string, @Body() body: { images: string[] }) {
-    return this.restaurantsService.addImages(id, body.images);
+  addImages(
+    @Param('id') id: string,
+    @Body() body: AddImagesDto,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.restaurantsService.addImages(id, body.images, user.id, user.role);
   }
 
   @Delete(':id/images')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(roles.OWNER, roles.ADMIN)
-  removeImage(@Param('id') id: string, @Body() body: { imageUrl: string }) {
-    return this.restaurantsService.removeImage(id, body.imageUrl);
+  removeImage(
+    @Param('id') id: string,
+    @Body() body: { imageUrl: string },
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.restaurantsService.removeImage(id, body.imageUrl, user.id, user.role);
   }
 
   @Patch(':id')
@@ -124,7 +151,7 @@ export class RestaurantsController {
     @Body() updateRestaurantDto: UpdateRestaurantDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.restaurantsService.update(id, updateRestaurantDto);
+    return this.restaurantsService.update(id, updateRestaurantDto, user.id, user.role);
   }
 
   @Delete(':id')

@@ -13,17 +13,17 @@ export type bookingsDocument = bookings & Document;
 
 @Schema({ timestamps: true })
 export class bookings {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   customerId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'restaurant', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'restaurant', required: true, index: true })
   restaurantId!: Types.ObjectId;
-  @Prop({ required: true })
+  @Prop({ required: true, index: true })
   bookingDate!: Date;
   @Prop({ required: true })
   bookingTime!: string;
-  @Prop({ required: true })
+  @Prop({ required: true, min: 1 })
   guests!: Number;
-  @Prop({ type: String, enum: Object.values(reviewsEnums), required: true })
+  @Prop({ type: String, enum: Object.values(reviewsEnums), required: true, index: true })
   status!: reviewsEnums;
   @Prop({ required: true })
   specialRequest!: string;
@@ -34,3 +34,5 @@ export class bookings {
 }
 
 export const bookingschema = SchemaFactory.createForClass(bookings);
+
+bookingschema.index({ restaurantId: 1, bookingDate: 1, status: 1 });

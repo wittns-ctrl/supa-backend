@@ -2,13 +2,22 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 
+
 describe('NotificationsController', () => {
   let controller: NotificationsController;
+
+  const mockSvc = {
+    findAll: jest.fn(),
+    create: jest.fn(),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [NotificationsController],
-      providers: [NotificationsService],
+      providers: [
+        { provide: NotificationsService, useValue: mockSvc },
+
+      ],
     }).compile();
 
     controller = module.get<NotificationsController>(NotificationsController);

@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { BookingsService } from './bookings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -17,41 +18,62 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { roles } from 'src/users/schema/user.schema';
+import { parsePagination } from 'src/common/utils/pagination.util';
 
 @Controller('bookings')
+@UseGuards(JwtAuthGuard)
 export class BookingsController {
   constructor(private readonly bookingsService: BookingsService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
-  create(@Body() createBookingDto: CreateBookingDto) {
+  create(
+    @Body() createBookingDto: CreateBookingDto,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    if (user.role === roles.CUSTOMER) {
+      createBookingDto.customerId = user.id;
+    }
     return this.bookingsService.create(createBookingDto);
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard)
   findAll(
     @Query('customerId') customerId?: string,
     @Query('restaurantId') restaurantId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @CurrentUser() user?: { id: string; role: string },
   ) {
-    return this.bookingsService.findAll(customerId, restaurantId);
+    const role = user?.role;
+    const { page: p, limit: l } = parsePagination({ page, limit });
+
+    if (role === roles.ADMIN) {
+      return this.bookingsService.findAll(customerId, restaurantId, user!.id, role, p, l);
+    }
+    if (role === roles.OWNER) {
+      // Owner scoping is enforced in the service (must own the restaurant).
+      return this.bookingsService.findAll(customerId, restaurantId, user!.id, role, p, l);
+    }
+    return this.bookingsService.findAll(undefined, undefined, user!.id, role, p, l);
   }
 
   @Get(':id')
-  @UseGuards(JwtAuthGuard)
-  findOne(@Param('id') id: string) {
-    return this.bookingsService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
+    return this.bookingsService.findOne(id, user.id, user.role);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(RolesGuard)
   @Roles(roles.OWNER, roles.ADMIN, roles.CUSTOMER)
-  update(@Param('id') id: string, @Body() updateBookingDto: UpdateBookingDto) {
-    return this.bookingsService.update(id, updateBookingDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateBookingDto: UpdateBookingDto,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.bookingsService.update(id, updateBookingDto, user.id, user.role);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
   remove(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
     return this.bookingsService.remove(id, user.id, user.role);
   }

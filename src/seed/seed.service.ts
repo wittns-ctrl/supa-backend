@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
@@ -12,13 +12,35 @@ import { menu, menuDocument } from 'src/menus/schema/menu.schema';
 
 @Injectable()
 export class SeedService implements OnModuleInit {
+  private readonly logger = new Logger(SeedService.name);
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(restaurant.name) private restaurantModel: Model<restaurantDocument>,
     @InjectModel(menu.name) private menuModel: Model<menuDocument>,
   ) {}
 
+  /**
+   * Demo seeding is dangerous in production: it creates known admin/owner/
+   * customer accounts with a hardcoded password. It is now opt-in via
+   * SEED_DEMO_DATA=true AND hard-disabled whenever NODE_ENV=production.
+   */
   async onModuleInit() {
+    const env = (process.env.NODE_ENV || 'development').toLowerCase();
+    const isProd = env === 'production' || env === 'prod';
+    const explicitlyEnabled = process.env.SEED_DEMO_DATA === 'true';
+
+    if (isProd) {
+      if (explicitlyEnabled) {
+        this.logger.warn('SEED_DEMO_DATA=true is ignored in production — demo seeding is disabled.');
+      }
+      return;
+    }
+    if (!explicitlyEnabled) {
+      this.logger.log('Demo seeding skipped (set SEED_DEMO_DATA=true to enable in non-production environments).');
+      return;
+    }
+
     const count = await this.restaurantModel.countDocuments();
     if (count > 0) return;
     await this.seed();
@@ -33,7 +55,7 @@ export class SeedService implements OnModuleInit {
         name: 'Admin User',
         email: 'admin@supameal.com',
         password,
-        phone: 1000000001,
+        phone: '1000000001',
         role: roles.ADMIN,
         isVerified: true,
       });
@@ -45,7 +67,7 @@ export class SeedService implements OnModuleInit {
         name: 'Maria Santos',
         email: 'maria@goldenplate.com',
         password,
-        phone: 1000000002,
+        phone: '1000000002',
         role: roles.OWNER,
         isVerified: true,
       });
@@ -57,7 +79,7 @@ export class SeedService implements OnModuleInit {
         name: 'Alex Johnson',
         email: 'alex@supameal.com',
         password,
-        phone: 1000000003,
+        phone: '1000000003',
         role: roles.CUSTOMER,
         isVerified: true,
       });
@@ -69,7 +91,7 @@ export class SeedService implements OnModuleInit {
         description: 'Fine dining experience with seasonal ingredients and elegant atmosphere.',
         cuisine: 'Fine Dining',
         location: { address: '123 Gourmet Ave', city: 'Downtown', latitude: 40.71, longitude: -74.0 },
-        phone: 2125550101,
+        phone: '2125550101',
         opening: 'Mon-Sun: 11:00 AM - 11:00 PM',
         capacity: 80,
         images: ['https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800'],
@@ -84,7 +106,7 @@ export class SeedService implements OnModuleInit {
         description: 'Authentic Japanese sushi and sashimi prepared by master chefs.',
         cuisine: 'Japanese',
         location: { address: '45 Sakura St', city: 'Uptown', latitude: 40.78, longitude: -73.96 },
-        phone: 2125550102,
+        phone: '2125550102',
         opening: 'Tue-Sun: 12:00 PM - 10:00 PM',
         capacity: 50,
         images: ['https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=800'],
@@ -99,7 +121,7 @@ export class SeedService implements OnModuleInit {
         description: 'Classic American burgers, fries, and shakes in a casual setting.',
         cuisine: 'American',
         location: { address: '78 Main St', city: 'Downtown', latitude: 40.73, longitude: -74.01 },
-        phone: 2125550103,
+        phone: '2125550103',
         opening: 'Mon-Sun: 10:00 AM - 12:00 AM',
         capacity: 60,
         images: ['https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800'],
@@ -125,10 +147,10 @@ export class SeedService implements OnModuleInit {
       }
     }
 
-    console.log('Database seeded with demo data');
-    console.log('Demo accounts (password: Password123!):');
-    console.log('  admin@supameal.com (admin)');
-    console.log('  maria@goldenplate.com (owner)');
-    console.log('  alex@supameal.com (customer)');
+    this.logger.log('Database seeded with demo data');
+    this.logger.log('Demo accounts (password: Password123!):');
+    this.logger.log('  admin@supameal.com (admin)');
+    this.logger.log('  maria@goldenplate.com (owner)');
+    this.logger.log('  alex@supameal.com (customer)');
   }
 }

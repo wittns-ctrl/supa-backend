@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { CreateNotificationDto } from './dto/create-notification.dto';
+import { UpdateNotificationDto } from './dto/update-notification.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { notification, notificationDocument } from './schema/notifications.schema';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
+import { roles } from 'src/users/schema/user.schema';
 
 @Injectable()
 export class NotificationsService {
@@ -28,11 +30,23 @@ export class NotificationsService {
     return items.map((n) => this.format(n));
   }
 
-  async markRead(id: string, userId: string) {
+  async findAllForUser(userId: string, userRole: string) {
+    if (userRole === roles.ADMIN) {
+      return this.findAll();
+    }
+    const items = await this.notificationModel
+      .find({ userId: new Types.ObjectId(userId) })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    return items.map((n) => this.format(n));
+  }
+
+  async markAsRead(id: string, userId: string, userRole: string) {
     const updated = await this.notificationModel.findById(id);
     if (!updated) throw new NotFoundException('Notification not found');
 
-    if (updated.userId.toString() !== userId) {
+    const ownerId = updated.userId.toString();
+    if (userRole !== roles.ADMIN && ownerId !== userId) {
       throw new UnauthorizedException('You are not authorized to modify this notification');
     }
 
@@ -41,12 +55,24 @@ export class NotificationsService {
     return this.format(updated);
   }
 
-  async markAllRead(userId: string) {
-    await this.notificationModel.updateMany({ userId, isRead: false }, { isRead: true });
+  async markAllAsRead(userId: string, userRole: string) {
+    // Admins mark only their own notifications here too — a platform-wide
+    // "mark everything read" needs an explicit admin endpoint + filter.
+    const filter: Record<string, unknown> = { userId, isRead: false };
+    await this.notificationModel.updateMany(filter, { isRead: true });
     return { message: 'All notifications marked as read' };
   }
 
+  async update(id: string, dto: UpdateNotificationDto) {
+    const updated = await this.notificationModel.findByIdAndUpdate(id, dto, { new: true });
+    if (!updated) throw new NotFoundException('Notification not found');
+    return this.format(updated);
+  }
+
   async remove(id: string, userId: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Notification not found');
+    }
     const deleted = await this.notificationModel.findById(id);
     if (!deleted) throw new NotFoundException('Notification not found');
 

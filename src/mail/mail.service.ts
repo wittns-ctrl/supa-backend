@@ -19,6 +19,16 @@ import { CreateMailDto } from './dto/create-mail.dto';
  *   4. Set FROM_EMAIL=onboarding@resend.dev (or your verified domain)
  */
 
+/** Escapes user-provided text before interpolating into email HTML. */
+function escapeHtml(input: string): string {
+  return String(input)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 @Injectable()
 export class MailService implements OnModuleInit {
   private transporter: nodemailer.Transporter | null = null;
@@ -55,7 +65,9 @@ export class MailService implements OnModuleInit {
           port,
           secure: port === 465,
           auth: { user, pass },
-          tls: { rejectUnauthorized: false },
+          // Require valid TLS certificates — rejectUnauthorized:false enables
+          // man-in-the-middle attacks on credentials and email content.
+          tls: { rejectUnauthorized: true },
         };
 
     this.transporter = nodemailer.createTransport(config);
@@ -222,7 +234,66 @@ export class MailService implements OnModuleInit {
     }
   }
 
-  // ── Send contact form email ───────────────────────────────────────────────
+  // ── Send payment receipt email ──────────────────────────────────────────
+  /**
+   * Receipt for a completed payment. Called from the Stripe webhook path so
+   * the email fires exactly once per successful payment, server-side.
+   */
+  async sendPaymentReceipt(params: {
+    to: string;
+    orderId: string;
+    amount: number;
+    currency: string;
+    itemsSummary?: string;
+    restaurantName?: string;
+  }) {
+    const {
+      to,
+      orderId,
+      amount,
+      currency,
+      itemsSummary,
+      restaurantName,
+    } = params;
+
+    const subject = `🧾 Your SupaMeal receipt — order #${orderId.slice(-6)}`;
+    const safeRestaurant = escapeHtml(restaurantName || 'SupaMeal');
+    const safeItems = escapeHtml(itemsSummary || 'Your order');
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;">
+        <div style="text-align:center;margin-bottom:24px;">
+          <h1 style="color:#f5a623;font-size:22px;margin:0;">SupaMeal</h1>
+          <p style="color:#999;font-size:13px;margin:4px 0 0;">Payment Receipt</p>
+        </div>
+        <p style="color:#e0e0e0;font-size:15px;">Thanks for your order from <strong style="color:#f5a623;">${safeRestaurant}</strong>!</p>
+        <div style="background:#111;border:1px solid #333;border-radius:12px;padding:20px;margin:20px 0;">
+          <div style="display:flex;justify-content:space-between;color:#e0e0e0;font-size:14px;margin-bottom:8px;">
+            <span>Order</span><span style="font-weight:700;">#${orderId.slice(-6)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;color:#e0e0e0;font-size:14px;margin-bottom:8px;">
+            <span>Items</span><span>${safeItems}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;color:#f5a623;font-size:18px;font-weight:900;border-top:1px solid #333;padding-top:12px;margin-top:8px;">
+            <span>Total paid</span><span>${amount.toFixed(2)} ${currency.toUpperCase()}</span>
+          </div>
+        </div>
+        <hr style="border:none;border-top:1px solid #333;margin:24px 0;" />
+        <p style="color:#555;font-size:12px;text-align:center;">Questions about this charge? Contact ${escapeHtml(process.env.SUPPORT_EMAIL || 'support@supameal.com')}</p>
+      </div>
+    `;
+    const text = `SupaMeal receipt — order #${orderId.slice(-6)}: ${amount.toFixed(2)} ${currency.toUpperCase()} paid to ${restaurantName || 'SupaMeal'}.`;
+
+    const sent = await this.sendViaResend(to, subject, html, text)
+      || await this.sendViaSmtp(to, subject, html, text);
+
+    if (!sent) {
+      this.logger.warn(
+        `[RECEIPT] Email delivery not configured — receipt for order ${orderId} was not sent.`,
+      );
+    }
+  }
+
+  // ── Send contact form email ───────────────────────────────────────────
   async sendContactEmail(dto: CreateMailDto) {
     const supportEmail = process.env.SUPPORT_EMAIL?.trim()
       || process.env.SMTP_USER?.trim()
@@ -230,8 +301,11 @@ export class MailService implements OnModuleInit {
 
     this.printToConsole('CONTACT', supportEmail, `From ${dto.email}: ${dto.message}`);
 
-    const subject = `SupaMeal Contact: ${dto.fullName}`;
-    const html = `<p><strong>From:</strong> ${dto.fullName} &lt;${dto.email}&gt;</p><p>${dto.message}</p>`;
+    const subject = `SupaMeal Contact: ${escapeHtml(dto.fullName)}`;
+    const safeName = escapeHtml(dto.fullName);
+    const safeEmail = escapeHtml(dto.email);
+    const safeMessage = escapeHtml(dto.message).replace(/\n/g, '<br />');
+    const html = `<p><strong>From:</strong> ${safeName} &lt;${safeEmail}&gt;</p><p>${safeMessage}</p>`;
     const text = `From: ${dto.fullName} <${dto.email}>\n\n${dto.message}`;
 
     await this.sendViaResend(supportEmail, subject, html, text)

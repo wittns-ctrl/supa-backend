@@ -17,9 +17,9 @@ export class Location {
   @Prop({ required: true })
   city!: string;
   @Prop({ required: true })
-  latitude!: Number;
+  latitude!: number;
   @Prop({ required: true })
-  longitude!: Number;
+  longitude!: number;
 }
 
 @Schema({ timestamps: true })
@@ -32,12 +32,13 @@ export class restaurant {
   ownerId!: Types.ObjectId;
   @Prop({ type: Location, required: true })
   location!: Location;
+  // Phone stored as string — Numbers drop leading zeros and "+" country codes
   @Prop({ required: true })
-  phone!: Number;
+  phone!: string;
   @Prop({ required: true })
   opening!: string;
   @Prop({ required: true })
-  capacity!: Number;
+  capacity!: number;
   @Prop({ type: [String], default: [] })
   images!: string[];
   @Prop({ required: true, default: false })
@@ -47,9 +48,9 @@ export class restaurant {
   @Prop({ default: 'International' })
   cuisine!: string;
   @Prop({ default: 0 })
-  rating!: Number;
+  rating!: number;
   @Prop({ default: 0 })
-  reviewCount!: Number;
+  reviewCount!: number;
   @Prop({ type: [String], default: [] })
   amenities!: string[];
   @Prop({ type: [String], default: [] })

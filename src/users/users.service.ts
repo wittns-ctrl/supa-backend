@@ -8,7 +8,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument, UserStatus } from './schema/user.schema';
+import { User, UserDocument, UserStatus, roles } from './schema/user.schema';
 import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
 import { order, orderDocument } from 'src/orders/schema/order.schema';
 import { bookings, bookingsDocument, reviewsEnums } from 'src/bookings/schema/bookings.schema';
@@ -34,6 +34,22 @@ export class UsersService {
     private readonly notificationModel: Model<notificationDocument>,
   ) {}
 
+  private assertSelfOrAdmin(
+    targetId: Types.ObjectId | string,
+    userId?: string,
+    userRole?: string,
+  ): void {
+    if (userRole === roles.ADMIN) return;
+    const targetStr =
+      targetId instanceof Types.ObjectId
+        ? targetId.toString()
+        : String(targetId);
+    if (userId && targetStr === userId) return;
+    throw new UnauthorizedException(
+      'You are not authorized to access this user',
+    );
+  }
+
   async findAll(role?: string, status?: string) {
     const filter: Record<string, unknown> = {};
     if (role) {
@@ -46,7 +62,8 @@ export class UsersService {
     return users.map((u) => this.formatUser(u));
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, userId?: string, userRole?: string) {
+    this.assertSelfOrAdmin(id, userId, userRole);
     const user = await this.userModel
       .findById(id)
       .select('-password -refreshToken')
@@ -55,7 +72,8 @@ export class UsersService {
     return this.formatUser(user);
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto) {
+  async update(id: string, updateUserDto: UpdateUserDto, userId?: string, userRole?: string) {
+    this.assertSelfOrAdmin(id, userId, userRole);
     const user = await this.userModel
       .findByIdAndUpdate(id, updateUserDto, { new: true })
       .select('-password -refreshToken');
@@ -63,7 +81,8 @@ export class UsersService {
     return this.formatUser(user);
   }
 
-  async changePassword(id: string, dto: ChangePasswordDto) {
+  async changePassword(id: string, dto: ChangePasswordDto, userId?: string, userRole?: string) {
+    this.assertSelfOrAdmin(id, userId, userRole);
     const user = await this.userModel.findById(id);
     if (!user) throw new NotFoundException('User not found');
     if (!user.password) throw new BadRequestException('No password set for this account (social login). Use the provider to sign in or request a password reset first.');
@@ -84,34 +103,51 @@ export class UsersService {
     return this.formatUser(user);
   }
 
-  async addFavorite(userId: string, restaurantId: string) {
+  async addFavorite(
+    targetUserId: string,
+    restaurantId: string,
+    callerUserId?: string,
+    userRole?: string,
+  ) {
+    this.assertSelfOrAdmin(targetUserId, callerUserId, userRole);
     if (!Types.ObjectId.isValid(restaurantId)) {
       throw new BadRequestException('Invalid restaurant id');
     }
     const user = await this.userModel
       .findByIdAndUpdate(
-        userId,
+        targetUserId,
         { $addToSet: { favorites: restaurantId } },
         { new: true },
       )
       .populate('favorites');
     if (!user) throw new NotFoundException('User not found');
-    return this.getFavorites(userId);
+    return this.getFavorites(targetUserId, callerUserId, userRole);
   }
 
-  async removeFavorite(userId: string, restaurantId: string) {
+  async removeFavorite(
+    targetUserId: string,
+    restaurantId: string,
+    callerUserId?: string,
+    userRole?: string,
+  ) {
+    this.assertSelfOrAdmin(targetUserId, callerUserId, userRole);
     const user = await this.userModel
       .findByIdAndUpdate(
-        userId,
+        targetUserId,
         { $pull: { favorites: restaurantId } },
         { new: true },
       )
       .populate('favorites');
     if (!user) throw new NotFoundException('User not found');
-    return this.getFavorites(userId);
+    return this.getFavorites(targetUserId, callerUserId, userRole);
   }
 
-  async getFavorites(userId: string) {
+  async getFavorites(
+    userId: string,
+    callerUserId?: string,
+    userRole?: string,
+  ) {
+    this.assertSelfOrAdmin(userId, callerUserId, userRole);
     const user = await this.userModel.findById(userId).populate('favorites');
     if (!user) throw new NotFoundException('User not found');
 
@@ -137,7 +173,12 @@ export class UsersService {
     return { message: 'User deleted' };
   }
 
-  async getDashboardStats(userId: string) {
+  async getDashboardStats(
+    userId: string,
+    callerUserId?: string,
+    userRole?: string,
+  ) {
+    this.assertSelfOrAdmin(userId, callerUserId, userRole);
     const user = await this.userModel.findById(userId).populate('favorites');
     if (!user) throw new NotFoundException('User not found');
 
