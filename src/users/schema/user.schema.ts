@@ -40,21 +40,28 @@ export class DeliveryAddress {
 export class User {
   @Prop({ required: true })
   name!: string;
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true, unique: true, index: true })
   email!: string;
   @Prop()
   password?: string;
+  // Phone stored as string — Numbers drop leading zeros and "+" country codes
   @Prop()
-  phone?: Number;
-  @Prop({ type: String, enum: Object.values(roles), required: true, default: roles.CUSTOMER })
+  phone?: string;
+  @Prop({ type: String, enum: Object.values(roles), required: true, default: roles.CUSTOMER, index: true })
   role!: roles;
   @Prop({ required: true, default: false })
   isVerified!: boolean;
-  @Prop({ type: String, enum: Object.values(UserStatus), default: UserStatus.ACTIVE })
+  @Prop({ type: String, enum: Object.values(UserStatus), default: UserStatus.ACTIVE, index: true })
   status!: UserStatus;
   @Prop()
   refreshToken?: string;
+  // #25: the previously-rotated-out refresh token, honored for a short grace
+  // window so two tabs refreshing concurrently don't revoke each other.
   @Prop()
+  previousRefreshToken?: string;
+  @Prop()
+  previousRefreshTokenExpiresAt?: Date;
+  @Prop({ index: true })
   resetToken?: string;
   @Prop()
   resetTokenExpiration?: Date;
@@ -62,6 +69,8 @@ export class User {
   emailVerificationOtp?: string;
   @Prop()
   emailVerificationOtpExpires?: Date;
+  @Prop({ default: 0 })
+  emailVerificationOtpAttempts?: number;
   @Prop({ type: Profile })
   profile?: Profile;
   @Prop({ type: DeliveryAddress })
@@ -77,3 +86,5 @@ export class User {
 
 export const Userschema = SchemaFactory.createForClass(User);
 
+// Lookup by hashed refresh/reset/OTP tokens must be fast and indexed
+Userschema.index({ resetToken: 1 }, { sparse: true });

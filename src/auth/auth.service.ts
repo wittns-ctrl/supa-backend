@@ -3,6 +3,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { CreateAuthDto } from './dto/signup-auth.dto';
 import { loginAuthDto } from './dto/login-auth.dto';
@@ -13,14 +14,38 @@ import { Model } from 'mongoose';
 import { roles, User, UserDocument } from '../users/schema/user.schema';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { randomInt, randomUUID } from 'crypto';
+import { randomInt, randomUUID, createHash, timingSafeEqual } from 'crypto';
 import { MailService } from 'src/mail/mail.service';
 import { emailverificationDto } from './dto/emailVerification.dto';
 import { LogoutAuthDto } from './dto/Logout.dto';
 import { mapFrontendRole, sanitizeUser } from 'src/common/utils/user-response.util';
 
+const OTP_MAX_ATTEMPTS = 5;
+
+// #25: the previously-rotated-out refresh token stays valid for this long so
+// two tabs (or a lost response) refreshing concurrently don't revoke each
+// other. Short window — long enough for races, useless for stolen tokens.
+const REFRESH_GRACE_MS = 30_000;
+
+function hashToken(token: string): string {
+  // SHA-256 is sufficient for high-entropy tokens (OTP digits / UUIDs) and is
+  // O(1) lookup in the DB, unlike bcrypt which forces expensive scans.
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function safeEqualHex(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
@@ -36,7 +61,7 @@ export class AuthService {
     const normalized = this.normalizeEmail(email);
     if (!normalized) return null;
     return this.userModel.findOne({
-      email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'i') },
     });
   }
 
@@ -57,8 +82,9 @@ export class AuthService {
       const expires = new Date();
       expires.setMinutes(expires.getMinutes() + 5);
 
-      existingUser.emailVerificationOtp = otp;
+      existingUser.emailVerificationOtp = hashToken(otp);
       existingUser.emailVerificationOtpExpires = expires;
+      existingUser.emailVerificationOtpAttempts = 0;
       await existingUser.save();
 
       await this.mailservice.sendOtpEmail(normalizedEmail, otp);
@@ -76,6 +102,11 @@ export class AuthService {
     expires.setMinutes(expires.getMinutes() + 5);
 
     const role = mapFrontendRole(signupdto.role) as roles;
+    if (role === roles.ADMIN) {
+      throw new BadRequestException(
+        'Admin role must be assigned by a system administrator',
+      );
+    }
     const autoVerify = role === roles.OWNER;
 
     const user = await this.userModel.create({
@@ -85,7 +116,7 @@ export class AuthService {
       phone: signupdto.phone,
       role,
       isVerified: autoVerify,
-      emailVerificationOtp: autoVerify ? undefined : otp,
+      emailVerificationOtp: autoVerify ? undefined : hashToken(otp),
       emailVerificationOtpExpires: autoVerify ? undefined : expires,
       profile: signupdto.profile,
     });
@@ -117,17 +148,33 @@ export class AuthService {
     if (
       !user.emailVerificationOtp ||
       !user.emailVerificationOtpExpires ||
-      user.emailVerificationOtp !== VerifyDto.otp
+      user.emailVerificationOtpExpires < new Date()
     ) {
       throw new BadRequestException('invalid or expired otp');
     }
 
-    if (user.emailVerificationOtpExpires < new Date()) {
-      throw new BadRequestException('otp expired');
+    // Brute-force protection: limit verification attempts per OTP window
+    const attempts = (user.emailVerificationOtpAttempts || 0) + 1;
+    if (attempts > OTP_MAX_ATTEMPTS) {
+      user.emailVerificationOtp = undefined;
+      user.emailVerificationOtpExpires = undefined;
+      user.emailVerificationOtpAttempts = 0;
+      await user.save();
+      throw new BadRequestException(
+        'Too many invalid attempts. Please request a new code.',
+      );
+    }
+
+    const providedHash = hashToken(VerifyDto.otp.trim());
+    if (!safeEqualHex(providedHash, user.emailVerificationOtp)) {
+      user.emailVerificationOtpAttempts = attempts;
+      await user.save();
+      throw new BadRequestException('invalid or expired otp');
     }
 
     user.emailVerificationOtp = undefined;
     user.emailVerificationOtpExpires = undefined;
+    user.emailVerificationOtpAttempts = 0;
     user.isVerified = true;
 
     await user.save();
@@ -144,14 +191,18 @@ export class AuthService {
     const user = await this.findUserByEmail(signinDto.email);
 
     if (!user) {
-      throw new UnauthorizedException('user not exists');
+      throw new UnauthorizedException('invalid email or password');
+    }
+
+    if (user.status === 'blocked') {
+      throw new UnauthorizedException('Account is blocked');
     }
 
     if (!user.isVerified) {
       throw new UnauthorizedException('Please verify your email first');
     }
 
-      if (!user.password) {
+    if (!user.password) {
       throw new UnauthorizedException(
         'This account uses social login. Please sign in with Google or Apple.',
       );
@@ -160,7 +211,8 @@ export class AuthService {
     const isMatch = await bcrypt.compare(signinDto.password, user.password);
 
     if (!isMatch) {
-      throw new UnauthorizedException('invalid password');
+      // Same message for missing user and wrong password — no enumeration
+      throw new UnauthorizedException('invalid email or password');
     }
 
     const tokens = await this.generateTokens(user);
@@ -186,8 +238,9 @@ export class AuthService {
     const expires = new Date();
     expires.setMinutes(expires.getMinutes() + 5);
 
-    user.emailVerificationOtp = otp;
+    user.emailVerificationOtp = hashToken(otp);
     user.emailVerificationOtpExpires = expires;
+    user.emailVerificationOtpAttempts = 0;
     await user.save();
 
     await this.mailservice.sendOtpEmail(normalized, otp);
@@ -248,61 +301,76 @@ export class AuthService {
       email: user.email,
       role: user.role,
     };
-    const refreshtoken = this.jwtservice.sign(payload, {
-      secret: process.env.JWT_REFRESH,
-      expiresIn: '7d',
+    const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
+    const refreshTtl: any = process.env.JWT_REFRESH_TTL || '7d';
+    const refreshSecret = process.env.JWT_REFRESH;
+    if (!refreshSecret) {
+      throw new Error('JWT_REFRESH is not configured — refusing to issue tokens');
+    }
+    const refreshtoken = this.jwtservice.sign(payload as any, {
+      secret: refreshSecret,
+      expiresIn: refreshTtl,
     });
 
-    const hashedrefreshtoken = await bcrypt.hash(refreshtoken, 10);
+    const hashedrefreshtoken = hashToken(refreshtoken);
+    // Keep the current token as the grace-period fallback before overwriting
+    if (user.refreshToken) {
+      user.previousRefreshToken = user.refreshToken;
+      user.previousRefreshTokenExpiresAt = new Date(Date.now() + REFRESH_GRACE_MS);
+    }
     user.refreshToken = hashedrefreshtoken;
     await user.save();
 
-    const accessToken = this.jwtservice.sign(payload);
+    const accessToken = this.jwtservice.sign(payload as any, { expiresIn: accessTtl });
     return { accessToken, refreshToken: refreshtoken };
   }
 
   async ForgotPassword(forgotDto: ForgotAuthDto) {
     const user = await this.findUserByEmail(forgotDto.email);
 
-    if (!user) {
-      throw new NotFoundException('user not found');
+    const resettoken = randomUUID();
+
+    if (user) {
+      const hashedToken = hashToken(resettoken);
+      const resettokenExpires = new Date();
+      resettokenExpires.setMinutes(resettokenExpires.getMinutes() + 15);
+
+      user.resetToken = hashedToken;
+      user.resetTokenExpiration = resettokenExpires;
+
+      await user.save();
+
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const link = `${frontendUrl}/reset-password?token=${resettoken}`;
+      try {
+        await this.mailservice.sendResetEmail(forgotDto.email, link);
+      } catch (_err) {
+        // swallow mail errors so we don't leak enumeration
+      }
     }
 
-    const resettoken = randomUUID();
-    const resettokenExpires = new Date();
-    resettokenExpires.setMinutes(resettokenExpires.getMinutes() + 15);
-
-    user.resetToken = resettoken;
-    user.resetTokenExpiration = resettokenExpires;
-
-    await user.save();
-
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const link = `${frontendUrl}/reset-password?token=${resettoken}`;
-    await this.mailservice.sendResetEmail(forgotDto.email, link);
-
-    return { message: 'Reset link sent to the email' };
+    return {
+      message:
+        'If an account exists with this email, a password reset link has been sent.',
+    };
   }
 
   async resetpassword(resetDto: resetAuthDto) {
-    const user = await this.userModel.findOne({
-      resetToken: resetDto.token,
-    });
+    // Token is hashed with SHA-256 before lookup → O(1) indexed query instead
+    // of scanning and bcrypt-comparing up to 50 candidate rows per request.
+    const hashedToken = hashToken(resetDto.token);
+    const user = await this.userModel
+      .findOne({
+        resetToken: hashedToken,
+        resetTokenExpiration: { $gt: new Date() },
+      })
+      .exec();
 
     if (!user) {
-      throw new NotFoundException('user not found');
+      throw new NotFoundException('Invalid or expired reset link');
     }
 
-    if (
-      !user.resetToken ||
-      (user.resetTokenExpiration && user.resetTokenExpiration < new Date())
-    ) {
-      throw new UnauthorizedException('token expired');
-    }
-
-    const hash = await bcrypt.hash(resetDto.newPassword, 12);
-
-    user.password = hash;
+    user.password = await bcrypt.hash(resetDto.newPassword, 12);
     user.resetToken = undefined;
     user.resetTokenExpiration = undefined;
 
@@ -311,20 +379,94 @@ export class AuthService {
     return { message: 'password reset successfully' };
   }
 
-  async Logout(logoutDto: LogoutAuthDto) {
-    const user = logoutDto.email ? await this.findUserByEmail(logoutDto.email) : null;
+  async Logout(
+    logoutDto: LogoutAuthDto,
+    caller?: { id: string; email: string; role: string },
+  ) {
+    let user: UserDocument | null = null;
+    if (caller && caller.id) {
+      user = await this.userModel.findById(caller.id);
+    } else if (logoutDto.email) {
+      user = await this.findUserByEmail(logoutDto.email);
+    }
 
     if (!user) {
       throw new UnauthorizedException('user not found');
-    }
-
-    if (!user.refreshToken) {
-      throw new UnauthorizedException('user already logged out');
     }
 
     user.refreshToken = undefined;
     await user.save();
 
     return { message: 'user logged out successfully' };
+  }
+
+  async refreshAccessToken(refreshToken: string) {
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    let payload: any;
+    try {
+      payload = this.jwtservice.verify(refreshToken, {
+        secret: process.env.JWT_REFRESH,
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    const userId = payload.sub;
+    const user = await this.userModel.findById(userId);
+    if (!user || !user.refreshToken) {
+      throw new UnauthorizedException('Refresh token has been revoked');
+    }
+
+    if (user.status === 'blocked') {
+      throw new UnauthorizedException('Account is blocked');
+    }
+
+    // Constant-time comparison of SHA-256 hashes
+    const providedHash = hashToken(refreshToken);
+    if (!safeEqualHex(providedHash, user.refreshToken)) {
+      // Grace window: an in-flight rotation from another tab may still be
+      // re-using the just-replaced token. Accept it once and return the
+      // current tokens instead of revoking the session.
+      if (
+        user.previousRefreshToken &&
+        user.previousRefreshTokenExpiresAt &&
+        user.previousRefreshTokenExpiresAt.getTime() > Date.now() &&
+        safeEqualHex(providedHash, user.previousRefreshToken)
+      ) {
+        this.logger.debug(
+          `Refresh grace period used for user ${user._id} — concurrent refresh absorbed`,
+       );
+        const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
+        return {
+          accessToken: this.jwtservice.sign(payload as any, {
+            expiresIn: accessTtl,
+          }),
+          refreshToken, // echo the still-graceful token back
+          user: sanitizeUser(user),
+        };
+      }
+
+      user.refreshToken = undefined;
+      user.previousRefreshToken = undefined;
+      user.previousRefreshTokenExpiresAt = undefined;
+      await user.save().catch(() => undefined);
+      throw new UnauthorizedException(
+        'Reuse detected — please re-login with your credentials',
+      );
+    }
+
+    // Successful rotation: clear the stale grace token
+    user.previousRefreshToken = undefined;
+    user.previousRefreshTokenExpiresAt = undefined;
+    await user.save();
+
+    const tokens = await this.generateTokens(user);
+    return {
+      ...tokens,
+      user: sanitizeUser(user),
+    };
   }
 }

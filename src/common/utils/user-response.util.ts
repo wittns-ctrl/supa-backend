@@ -4,6 +4,8 @@ export function sanitizeUser(user: UserDocument) {
   const obj = user.toObject();
   delete obj.password;
   delete obj.refreshToken;
+  delete obj.previousRefreshToken;
+  delete obj.previousRefreshTokenExpiresAt;
   delete obj.resetToken;
   delete obj.resetTokenExpiration;
   delete obj.emailVerificationOtp;
