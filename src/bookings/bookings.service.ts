@@ -9,8 +9,38 @@ import { User, UserDocument } from 'src/users/schema/user.schema';
 import { roles } from 'src/users/schema/user.schema';
 import { NotificationsService } from 'src/notifications/notifications.service';
 
+// Strict 24-hour HH:MM — the old /^\d{1,2}:\d{2}$/ accepted "99:99"
+const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 @Injectable()
 export class BookingsService {
+  // Serialize check-then-write per restaurant+date so two concurrent bookings
+  // (or a booking racing an edit) can't both pass the capacity check.
+  // MongoDB standalone has no multi-document transactions, so an in-process
+  // per-key mutex is the simplest correct guard within a single API replica.
+  private readonly dayLocks = new Map<string, Promise<unknown>>();
+
+  private async withDayLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.dayLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prev.then(() => gate);
+    this.dayLocks.set(key, tail);
+    await prev.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.dayLocks.get(key) === tail) this.dayLocks.delete(key);
+    }
+  }
+
+  private dayKey(restaurantId: string, date: Date) {
+    return `${restaurantId}:${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  }
+
   constructor(
     @InjectModel(bookings.name)
     private readonly bookingsModel: Model<bookingsDocument>,
@@ -53,8 +83,8 @@ export class BookingsService {
       throw new BadRequestException('Bookings can only be made up to 90 days in advance');
     }
 
-    if (!/^\d{1,2}:\d{2}$/.test(createBookingDto.bookingTime || '')) {
-      throw new BadRequestException('bookingTime must be in HH:MM format');
+    if (!TIME_REGEX.test(createBookingDto.bookingTime || '')) {
+      throw new BadRequestException('bookingTime must be a valid time in HH:MM format');
     }
 
     const guests = Number(createBookingDto.guests);
@@ -68,38 +98,44 @@ export class BookingsService {
     }
 
     // Count confirmed/pending seats for this date — refuse if the restaurant
-    // would be over capacity.
-    const sameDay = await this.bookingsModel.find({
-      restaurantId: createBookingDto.restaurantId,
-      bookingDate: {
-        $gte: new Date(bookingDate.getFullYear(), bookingDate.getMonth(), bookingDate.getDate()),
-        $lt: new Date(bookingDate.getFullYear(), bookingDate.getMonth(), bookingDate.getDate() + 1),
+    // would be over capacity. Locked per restaurant+day so concurrent requests
+    // serialize on the read-then-insert.
+    return this.withDayLock(
+      this.dayKey(createBookingDto.restaurantId, bookingDate),
+      async () => {
+        const sameDay = await this.bookingsModel.find({
+          restaurantId: createBookingDto.restaurantId,
+          bookingDate: {
+            $gte: new Date(bookingDate.getFullYear(), bookingDate.getMonth(), bookingDate.getDate()),
+            $lt: new Date(bookingDate.getFullYear(), bookingDate.getMonth(), bookingDate.getDate() + 1),
+          },
+          status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
+        });
+        const seatsTaken = sameDay.reduce((sum, b) => sum + Number(b.guests || 0), 0);
+        if (restaurantDoc.capacity && seatsTaken + guests > Number(restaurantDoc.capacity)) {
+          throw new BadRequestException(
+            'No availability for this date — the restaurant is fully booked',
+          );
+        }
+
+        const created = await this.bookingsModel.create({
+          ...createBookingDto,
+          customerId,
+          guests,
+          bookingDate,
+          specialRequest: createBookingDto.specialRequest || '',
+          status: reviewsEnums.PENDING,
+        });
+
+        await this.notificationsService.create({
+          userId: restaurantDoc.ownerId.toString(),
+          title: 'New Table Booking',
+          message: `New booking request for ${restaurantDoc.name}`,
+        });
+
+        return this.formatBooking(created);
       },
-      status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
-    });
-    const seatsTaken = sameDay.reduce((sum, b) => sum + Number(b.guests || 0), 0);
-    if (restaurantDoc.capacity && seatsTaken + guests > Number(restaurantDoc.capacity)) {
-      throw new BadRequestException(
-        'No availability for this date — the restaurant is fully booked',
-      );
-    }
-
-    const created = await this.bookingsModel.create({
-      ...createBookingDto,
-      customerId,
-      guests,
-      bookingDate,
-      specialRequest: createBookingDto.specialRequest || '',
-      status: reviewsEnums.PENDING,
-    });
-
-    await this.notificationsService.create({
-      userId: restaurantDoc.ownerId.toString(),
-      title: 'New Table Booking',
-      message: `New booking request for ${restaurantDoc.name}`,
-    });
-
-    return this.formatBooking(created);
+    );
   }
 
   async findAll(customerId?: string, restaurantId?: string, userId?: string, userRole?: string, page = 1, limit = 20) {
@@ -180,26 +216,106 @@ export class BookingsService {
       }
     }
 
-    const updated = await this.bookingsModel
-      .findByIdAndUpdate(id, updateBookingDto, { new: true })
-      .populate('restaurantId', 'name')
-      .populate('customerId', 'name email');
+    // Identity fields cannot be moved to another booking — a change of
+    // restaurant/customer is a new booking, not an edit (prevents cross-
+    // restaurant moves that would bypass the capacity check). Owner is
+    // implicit from the JWT caller; never accepted from the body.
+    delete updateBookingDto.customerId;
+    delete updateBookingDto.restaurantId;
 
-    if (!updated) throw new NotFoundException('Booking not found');
-
-    if (updateBookingDto.status && updated.customerId) {
-      const customerId =
-        typeof updated.customerId === 'object'
-          ? (updated.customerId as { _id: Types.ObjectId })._id.toString()
-          : String(updated.customerId);
-      await this.notificationsService.create({
-        userId: customerId,
-        title: 'Booking Update',
-        message: `Your booking status is now: ${updateBookingDto.status}`,
-      });
+    // Re-validate the combined state (existing values + patch) exactly like
+    // create() does, so no edit path can slip past date/guests/capacity rules.
+    const nextDate = updateBookingDto.bookingDate
+      ? new Date(updateBookingDto.bookingDate)
+      : new Date(existing.bookingDate);
+    if (Number.isNaN(nextDate.getTime())) {
+      throw new BadRequestException('Invalid booking date');
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (nextDate < today) {
+      throw new BadRequestException('Booking date cannot be in the past');
+    }
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + 90);
+    if (nextDate > maxDate) {
+      throw new BadRequestException('Bookings can only be made up to 90 days in advance');
     }
 
-    return this.formatBooking(updated);
+    const nextTime = updateBookingDto.bookingTime || existing.bookingTime;
+    if (!TIME_REGEX.test(nextTime || '')) {
+      throw new BadRequestException('bookingTime must be a valid time in HH:MM format');
+    }
+
+    const nextGuests = updateBookingDto.guests !== undefined
+      ? Number(updateBookingDto.guests)
+      : Number(existing.guests);
+    if (!Number.isInteger(nextGuests) || nextGuests < 1 || nextGuests > 50) {
+      throw new BadRequestException('Guests must be between 1 and 50');
+    }
+
+    const restaurantDoc = await this.restaurantModel.findById(existing.restaurantId);
+    if (restaurantDoc?.capacity && nextGuests > Number(restaurantDoc.capacity)) {
+      throw new BadRequestException(
+        `Party size exceeds restaurant capacity (${restaurantDoc.capacity})`,
+      );
+    }
+
+    // Capacity check + write under the same per-day lock as create() so an
+    // edit racing a new booking can't overcommit the restaurant.
+    return this.withDayLock(
+      this.dayKey(existing.restaurantId.toString(), nextDate),
+      async () => {
+        if (restaurantDoc?.capacity) {
+          // Capacity check against other active bookings on that date — excluding
+          // this booking itself from the sum.
+          const sameDay = await this.bookingsModel.find({
+            _id: { $ne: existing._id },
+            restaurantId: existing.restaurantId,
+            bookingDate: {
+              $gte: new Date(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate()),
+              $lt: new Date(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate() + 1),
+            },
+            status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
+          });
+          const seatsTaken = sameDay.reduce((sum, b) => sum + Number(b.guests || 0), 0);
+          if (seatsTaken + nextGuests > Number(restaurantDoc.capacity)) {
+            throw new BadRequestException(
+              'No availability for this date — the restaurant is fully booked',
+            );
+          }
+        }
+
+        const updated = await this.bookingsModel
+          .findByIdAndUpdate(
+            id,
+            {
+              ...updateBookingDto,
+              ...(updateBookingDto.bookingDate ? { bookingDate: nextDate } : {}),
+              guests: nextGuests,
+            },
+            { new: true },
+          )
+          .populate('restaurantId', 'name')
+          .populate('customerId', 'name email');
+
+        if (!updated) throw new NotFoundException('Booking not found');
+
+        if (updateBookingDto.status && updated.customerId) {
+          const customerId =
+            typeof updated.customerId === 'object'
+              ? (updated.customerId as { _id: Types.ObjectId })._id.toString()
+              : String(updated.customerId);
+          await this.notificationsService.create({
+            userId: customerId,
+            title: 'Booking Update',
+            message: `Your booking status is now: ${updateBookingDto.status}`,
+          });
+        }
+
+        return this.formatBooking(updated);
+      },
+    );
   }
 
   async remove(id: string, userId: string, userRole: string) {
@@ -208,6 +324,16 @@ export class BookingsService {
     }
     const booking = await this.bookingsModel.findById(id);
     if (!booking) throw new NotFoundException('Booking not found');
+
+    // Terminal states are final — a completed/cancelled booking can't be "re-cancelled"
+    if (
+      booking.status !== reviewsEnums.PENDING &&
+      booking.status !== reviewsEnums.CONFIRMED
+    ) {
+      throw new BadRequestException(
+        `A booking in status "${booking.status}" cannot be cancelled`,
+      );
+    }
 
     const customerId = booking.customerId.toString();
     const restaurant = await this.restaurantModel.findById(booking.restaurantId);

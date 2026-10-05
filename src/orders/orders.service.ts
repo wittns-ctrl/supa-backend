@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   UnauthorizedException,
+  ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -17,6 +19,7 @@ import { roles } from 'src/users/schema/user.schema';
 import { PromosService } from 'src/promos/promos.service';
 import { PromoDiscountType } from 'src/promos/schema/promo.schema';
 import { OrderEventsService } from './order-events.service';
+import { PaymentsService } from 'src/payments/payments.service';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Order Placed',
@@ -66,6 +69,8 @@ const OWNER_ALLOWED = new Set([
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @InjectModel(order.name) private orderModel: Model<orderDocument>,
     @InjectModel(menu.name) private menuModel: Model<menuDocument>,
@@ -74,6 +79,7 @@ export class OrdersService {
     private notificationsService: NotificationsService,
     private promosService: PromosService,
     private readonly orderEvents: OrderEventsService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   async create(
@@ -132,11 +138,21 @@ export class OrdersService {
     if (dto.promoCode) {
       const promoResult = await this.promosService.validateCode(dto.promoCode, subtotal);
       if (promoResult.valid) {
-        discount = promoResult.discount;
-        appliedDiscountType = (promoResult as any).discountType ?? null;
-        appliedPromoId = (promoResult as any).promoId
+        // Consume the promo atomically BEFORE creating the order — if the code
+        // just hit its usage limit, we refuse the discount instead of granting
+        // one and silently swallowing the increment failure afterwards.
+        const promoId = (promoResult as any).promoId
           ? new Types.ObjectId((promoResult as any).promoId)
           : null;
+        if (promoId) {
+          const consumed = await this.promosService.incrementUsageSafe(promoId);
+          if (!consumed) {
+            throw new BadRequestException('Promo code has just reached its usage limit');
+          }
+          appliedPromoId = promoId;
+        }
+        discount = promoResult.discount;
+        appliedDiscountType = (promoResult as any).discountType ?? null;
       }
     }
 
@@ -168,15 +184,8 @@ export class OrdersService {
       timeline,
     });
 
-    if (appliedPromoId && discount > 0) {
-      // Atomic, guarded increment — a promo at its usage limit can no longer
-      // be consumed even under concurrent orders.
-      try {
-        await this.promosService.incrementUsageSafe(appliedPromoId);
-      } catch (_err) {
-        // ignore — order already placed, promo tracking is secondary
-      }
-    }
+    // NOTE: promo usage was already incremented atomically BEFORE order
+    // creation (validate → consume → create). No post-hoc increment here.
 
     await this.paymentModel.create({
       orderId: created._id,
@@ -381,16 +390,38 @@ export class OrdersService {
     }
 
     const timeline = this.buildTimelineForStatus(status);
+    // Optimistic concurrency: the update only matches if the status is still
+    // what we validated above — two concurrent transitions can't both win.
     const updated = await this.orderModel
-      .findByIdAndUpdate(id, { status, timeline, eta: this.getEta(status) }, { new: true })
+      .findOneAndUpdate(
+        { _id: id, status: populated.status },
+        { status, timeline, eta: this.getEta(status) },
+        { new: true },
+      )
       .populate('customerId', 'name');
 
-    if (!updated) throw new NotFoundException('Order not found');
+    if (!updated) {
+      throw new ConflictException(
+        `Order status changed concurrently — refresh and try again (current status: "${populated.status}")`,
+      );
+    }
 
     const customerId =
       typeof updated.customerId === 'object'
         ? (updated.customerId as { _id: Types.ObjectId })._id.toString()
         : String(updated.customerId);
+
+    // Any state past PENDING means payment already succeeded (fake or Stripe),
+    // so cancelling it must return the money. A refund failure must not block
+    // the cancellation — the record stays for manual reconciliation.
+    let refundWarning: string | undefined;
+    if (status === OrderStatus.CANCELLED && populated.status !== OrderStatus.PENDING) {
+      const refund = await this.paymentsService.refundOrderPayment(id);
+      if (!refund.refunded && refund.reason) {
+        refundWarning = `Order cancelled but refund could not be completed automatically: ${refund.reason}`;
+        this.logger.warn(refundWarning);
+      }
+    }
 
     await this.notificationsService.create({
       userId: customerId,
@@ -401,7 +432,8 @@ export class OrdersService {
     // Live push to any open SSE tracking streams for this order
     this.orderEvents.emit(id, status, updated.eta);
 
-    return this.formatOrder(updated);
+    const formatted = this.formatOrder(updated);
+    return refundWarning ? { ...formatted, warning: refundWarning } : formatted;
   }
 
   async reorder(id: string, customerId: string) {

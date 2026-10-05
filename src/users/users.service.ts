@@ -72,10 +72,41 @@ export class UsersService {
     return this.formatUser(user);
   }
 
+  /**
+   * Self-service profile update. The DTO whitelists safe fields only
+   * (name/email/phone/deliveryAddress/profile) — role, status and password
+   * are structurally impossible to set here (C3 privilege-escalation fix).
+   * Email uniqueness is enforced manually since the unique index alone
+   * returns an opaque 500 on duplicates.
+   */
   async update(id: string, updateUserDto: UpdateUserDto, userId?: string, userRole?: string) {
     this.assertSelfOrAdmin(id, userId, userRole);
+
+    if (updateUserDto.email) {
+      const normalized = updateUserDto.email.trim().toLowerCase();
+      const existing = await this.userModel.findOne({
+        email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      });
+      if (existing && existing._id.toString() !== id) {
+        throw new BadRequestException('Email is already in use by another account');
+      }
+      updateUserDto.email = normalized;
+    }
+
     const user = await this.userModel
-      .findByIdAndUpdate(id, updateUserDto, { new: true })
+      .findByIdAndUpdate(id, updateUserDto, { new: true, runValidators: true })
+      .select('-password -refreshToken');
+    if (!user) throw new NotFoundException('User not found');
+    return this.formatUser(user);
+  }
+
+  /** Admin-only role assignment — the safe path for promote/demote. */
+  async setRole(id: string, role: 'customer' | 'owner' | 'admin') {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid user id');
+    }
+    const user = await this.userModel
+      .findByIdAndUpdate(id, { role }, { new: true, runValidators: true })
       .select('-password -refreshToken');
     if (!user) throw new NotFoundException('User not found');
     return this.formatUser(user);
@@ -91,6 +122,10 @@ export class UsersService {
     if (!match) throw new UnauthorizedException('Current password is incorrect');
 
     user.password = await bcrypt.hash(dto.newPassword, 12);
+    // Invalidate all existing sessions — old refresh tokens must not survive a credential change
+    user.refreshToken = undefined;
+    user.previousRefreshToken = undefined;
+    user.previousRefreshTokenExpiresAt = undefined;
     await user.save();
     return { message: 'Password updated successfully' };
   }
@@ -211,7 +246,7 @@ export class UsersService {
     }
 
     const favoritesCount = user.favorites ? user.favorites.length : 0;
-    const favoriteRestaurants = await this.getFavorites(userId);
+    const favoriteRestaurants = await this.getFavorites(userId, callerUserId, userRole);
 
     const userReviews = await this.reviewModel.find({ customerId: userId });
     const reviewsCount = userReviews.length;

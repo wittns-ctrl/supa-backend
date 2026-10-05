@@ -10,7 +10,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserDto, SetUserRoleDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
@@ -92,6 +92,13 @@ export class UsersController {
   @Roles(roles.ADMIN)
   setStatus(@Param('id') id: string, @Body() body: SetUserStatusDto) {
     return this.usersService.setStatus(id, body.status);
+  }
+
+  @Patch(':id/role')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(roles.ADMIN)
+  setRole(@Param('id') id: string, @Body() body: SetUserRoleDto) {
+    return this.usersService.setRole(id, body.role);
   }
 
   @Patch(':id')

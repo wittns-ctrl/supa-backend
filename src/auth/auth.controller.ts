@@ -11,6 +11,7 @@ import {
   Optional,
   UnauthorizedException,
   BadRequestException,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
@@ -41,10 +42,11 @@ interface PendingOAuthCode {
 }
 
 @Controller('auth')
-export class AuthController {
+export class AuthController implements OnModuleDestroy {
   private readonly logger = new Logger(AuthController.name);
   private googleConfigured: boolean;
   private pendingCodes = new Map<string, PendingOAuthCode>();
+  private readonly codePurgeTimer: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly authService: AuthService,
@@ -54,12 +56,17 @@ export class AuthController {
   ) {
     this.googleConfigured = this.googleStrategy?.isConfigured ?? false;
     // Periodically purge expired codes to keep the map bounded
-    setInterval(() => {
+    this.codePurgeTimer = setInterval(() => {
       const now = Date.now();
       for (const [code, entry] of this.pendingCodes) {
         if (entry.expiresAt < now) this.pendingCodes.delete(code);
       }
-    }, OAUTH_CODE_TTL_MS).unref?.();
+    }, OAUTH_CODE_TTL_MS);
+    this.codePurgeTimer.unref?.();
+  }
+
+  onModuleDestroy() {
+    clearInterval(this.codePurgeTimer);
   }
 
   @Post('signup')

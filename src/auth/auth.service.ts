@@ -373,6 +373,10 @@ export class AuthService {
     user.password = await bcrypt.hash(resetDto.newPassword, 12);
     user.resetToken = undefined;
     user.resetTokenExpiration = undefined;
+    // A reset link is proof the old credentials are compromised — kill all sessions
+    user.refreshToken = undefined;
+    user.previousRefreshToken = undefined;
+    user.previousRefreshTokenExpiresAt = undefined;
 
     await user.save();
 

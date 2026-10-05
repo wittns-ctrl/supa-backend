@@ -67,6 +67,9 @@ export class MenusService {
   }
 
   async findOne(id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid menu id');
+    }
     const item = await this.menuModel.findById(id);
     if (!item) throw new NotFoundException('Menu item not found');
     return this.formatMenu(item);

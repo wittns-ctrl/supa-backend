@@ -9,6 +9,7 @@ import { payment, paymentschema } from 'src/payments/schema/payments.schema';
 import { NotificationsModule } from 'src/notifications/notifications.module';
 import { AuthModule } from 'src/auth/auth.module';
 import { PromosModule } from 'src/promos/promos.module';
+import { PaymentsModule } from 'src/payments/payments.module';
 import { OrderEventsService } from './order-events.service';
 import { SseTicketsService } from './sse-tickets.service';
 import { OrderEventsController } from './order-events.controller';
@@ -24,6 +25,7 @@ import { OrderEventsController } from './order-events.controller';
     NotificationsModule,
     AuthModule,
     PromosModule,
+    PaymentsModule,
   ],
   controllers: [OrdersController, OrderEventsController],
   providers: [OrdersService, OrderEventsService, SseTicketsService],

@@ -204,8 +204,6 @@ export class MailService implements OnModuleInit {
 
   // ── Send password reset email ─────────────────────────────────────────────
   async sendResetEmail(to: string, resetLink: string) {
-    this.printToConsole('RESET', to, resetLink);
-
     const subject = '🔑 Reset your SupaMeal password';
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;">
@@ -230,6 +228,9 @@ export class MailService implements OnModuleInit {
       || await this.sendViaSmtp(to, subject, html, text);
 
     if (!sent) {
+      // Only dump the live reset link to the console when no provider
+      // actually delivered the email — otherwise it leaks into server logs.
+      this.printToConsole('RESET', to, resetLink);
       this.logger.warn(`[RESET] Email delivery failed — reset link for ${to} is visible in the server console above.`);
     }
   }

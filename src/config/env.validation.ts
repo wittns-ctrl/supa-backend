@@ -44,7 +44,6 @@ export class EnvVars {
   @IsOptional()
   @IsInt()
   @Min(1)
-  @IsOptional()
   PORT?: number;
 
   @IsOptional()

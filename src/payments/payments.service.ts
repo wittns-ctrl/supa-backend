@@ -70,12 +70,15 @@ export class PaymentsService {
       .exec();
     if (!order) throw new NotFoundException('Order not found');
 
+    const populated = order.customerId as { _id?: Types.ObjectId } | Types.ObjectId | null | undefined;
     const customerId =
-      typeof order.customerId === 'object'
-        ? (order.customerId as { _id: Types.ObjectId })._id.toString()
-        : String(order.customerId);
+      populated && typeof populated === 'object' && '_id' in populated && populated._id
+        ? populated._id.toString()
+        : populated
+          ? String(populated)
+          : '';
 
-    if (userRole !== roles.ADMIN && customerId !== userId) {
+    if (userRole !== roles.ADMIN && (!customerId || customerId !== userId)) {
       throw new UnauthorizedException('You are not authorized to pay for this order');
     }
     return order;
@@ -118,18 +121,27 @@ export class PaymentsService {
     }
 
     const amountCents = Math.round(amount * 100);
-    const customer = typeof order.customerId === 'object'
-      ? (order.customerId as { _id: Types.ObjectId })._id
-      : order.customerId;
+    const populatedCustomer = order.customerId as
+      | { _id?: Types.ObjectId }
+      | Types.ObjectId
+      | null
+      | undefined;
+    const customer =
+      populatedCustomer && typeof populatedCustomer === 'object' && '_id' in populatedCustomer && populatedCustomer._id
+        ? populatedCustomer._id
+        : (populatedCustomer as Types.ObjectId | undefined);
+    if (!customer) throw new BadRequestException('Order has no customer');
 
     if (this.stripe) {
       const intent = await this.stripe.paymentIntents.create({
         amount: amountCents,
         currency: this.currency,
+        // Client-supplied metadata spread FIRST so orderId/customerId can't be
+        // overridden — these keys are server-trusted and used by the webhook.
         metadata: {
+          ...metadata,
           orderId: order.id,
           customerId: customer.toString(),
-          ...metadata,
         },
         automatic_payment_methods: { enabled: true },
       });
@@ -252,19 +264,77 @@ export class PaymentsService {
       { upsert: false },
     );
 
-    order.status = OrderStatus.ACCEPTED;
-    await order.save();
+    // Idempotency + state guard: a webhook can arrive after the client already
+    // confirmed (duplicate notification) or after the customer cancelled the
+    // order (payment would resurrect a dead order). Only move PENDING →
+    // ACCEPTED; already-paid orders stay untouched, and any terminal state
+    // (cancelled/rejected/delivered) is rejected loudly.
+    const alreadyPaid = order.status === OrderStatus.ACCEPTED;
+    if (
+      order.status !== OrderStatus.PENDING &&
+      order.status !== OrderStatus.ACCEPTED
+    ) {
+      this.logger.warn(
+        `Payment received for order ${order.id} in non-payable state "${order.status}" — order not modified`,
+      );
+      return {
+        orderId: order.id,
+        status: order.status,
+        amount,
+        warning: `Order was in status "${order.status}" — payment recorded but order state unchanged`,
+      };
+    }
 
-    const customerId = order.customerId?.toString();
-    if (customerId) {
-      await this.notificationsService.create({
-        userId: customerId,
-        title: 'Payment confirmed',
-        message: `Your order ${order.id} has been paid. The restaurant will prepare it soon.`,
-      });
+    if (!alreadyPaid) {
+      order.status = OrderStatus.ACCEPTED;
+      await order.save();
+
+      const customerId = order.customerId?.toString();
+      if (customerId) {
+        await this.notificationsService.create({
+          userId: customerId,
+          title: 'Payment confirmed',
+          message: `Your order ${order.id} has been paid. The restaurant will prepare it soon.`,
+        });
+      }
     }
 
     return { orderId: order.id, status: OrderStatus.ACCEPTED, amount };
+  }
+
+  /**
+   * Refund the most recent successful payment for an order. Used when a paid
+   * order is cancelled. Idempotent: skips orders whose latest payment is
+   * already refunded, and skips gracefully when Stripe is not configured
+   * (fake dev mode has no money to return).
+   */
+  async refundOrderPayment(orderId: string): Promise<{ refunded: boolean; reason?: string }> {
+    this.assertValidOrderId(orderId);
+    const record = await this.paymentModel
+      .findOne({ orderId: new Types.ObjectId(orderId), status: Payments.PAID })
+      .sort({ createdAt: -1 })
+      .exec();
+    if (!record) {
+      return { refunded: false, reason: 'no paid payment found' };
+    }
+    if (!this.stripe || !record.paymentIntentId) {
+      return { refunded: false, reason: 'stripe not configured or no payment intent' };
+    }
+    try {
+      await this.stripe.refunds.create({ payment_intent: record.paymentIntentId });
+    } catch (err) {
+      // Already-refunded is the only expected conflict — treat as success
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/already been refunded/i.test(message)) {
+        this.logger.error(`Refund failed for order ${orderId}`, err as Error);
+        return { refunded: false, reason: message };
+      }
+    }
+    await this.paymentModel.updateOne(
+      { _id: record._id },
+      { $set: { status: Payments.REFUNDED } },
+    );
+    return { refunded: true };
   }
 
   async handleStripeWebhook(signature: string, rawBody: Buffer) {

@@ -21,6 +21,10 @@ COPY --from=build --chown=nestjs:nodejs /app/node_modules ./node_modules
 COPY --from=build --chown=nestjs:nodejs /app/dist ./dist
 COPY --chown=nestjs:nodejs package.json ./
 
+# Pre-create the uploads dir with ownership so the named volume
+# (uploads_data:/app/uploads) inherits writable perms instead of root-owned.
+RUN mkdir -p /app/uploads && chown -R nestjs:nodejs /app/uploads
+
 USER nestjs
 EXPOSE 3000
 
