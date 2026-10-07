@@ -49,4 +49,3 @@ export class Promo {
 }
 
 export const PromoSchema = SchemaFactory.createForClass(Promo);
-PromoSchema.index({ code: 1 }, { unique: true });

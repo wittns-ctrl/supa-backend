@@ -40,5 +40,3 @@ export class payment {
 }
 
 export const paymentschema = SchemaFactory.createForClass(payment);
-
-paymentschema.index({ paymentIntentId: 1 }, { unique: true, sparse: true });

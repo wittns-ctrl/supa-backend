@@ -4,6 +4,7 @@ import { ReviewsController } from './reviews.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { review, reviewschema } from './schema/review.schema';
 import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
+import { order, orderSchema } from 'src/orders/schema/order.schema';
 import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
@@ -11,6 +12,7 @@ import { AuthModule } from 'src/auth/auth.module';
     MongooseModule.forFeature([
       { name: review.name, schema: reviewschema },
       { name: restaurant.name, schema: restaurantSchema },
+      { name: order.name, schema: orderSchema },
     ]),
     AuthModule,
   ],

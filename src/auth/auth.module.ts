@@ -10,7 +10,6 @@ import { MailModule } from 'src/mail/mail.module';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
-import { MailService } from 'src/mail/mail.service';
 import { OAuthStateService } from './oauth-state.service';
 
 @Module({
@@ -32,7 +31,7 @@ import { OAuthStateService } from './oauth-state.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AppleAuthService, JwtStrategy, GoogleStrategy, MailService, OAuthStateService],
+  providers: [AuthService, AppleAuthService, JwtStrategy, GoogleStrategy, OAuthStateService],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}

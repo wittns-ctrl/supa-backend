@@ -8,6 +8,7 @@ import { resolve } from 'path';
 import { AppModule } from './app.module';
 import { isProductionEnv } from './config/env.validation';
 import { UPLOAD_DIR } from './uploads/uploads.controller';
+import { FileLogger } from './logger/file-logger';
 import { initSentry } from './sentry';
 
 function parseCorsOrigins(): (string | RegExp)[] {
@@ -54,11 +55,17 @@ async function bootstrap() {
   // Error tracking — no-op unless SENTRY_DSN is configured (see src/sentry.ts)
   initSentry();
 
+  // Console + persistent file logging (logs/app-YYYY-MM-DD.log). Passed to
+  // NestFactory so every Nest log — including early bootstrap — is captured.
+  FileLogger.init();
+  const fileLogger = new FileLogger();
+
   const logger = new Logger('Bootstrap');
   const isProd = isProductionEnv();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
+    logger: fileLogger,
   });
 
   if (isProd) {

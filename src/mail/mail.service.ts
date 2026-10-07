@@ -3,7 +3,8 @@ import * as nodemailer from 'nodemailer';
 import { CreateMailDto } from './dto/create-mail.dto';
 
 /**
- * MailService — tries SMTP first; falls back to console logging.
+ * MailService — tries SMTP first (works with any recipient); falls back to
+ * Resend, then to printing on the server console.
  *
  * Gmail App Password Setup (to enable real email delivery):
  *   1. Go to https://myaccount.google.com/apppasswords
@@ -55,16 +56,26 @@ export class MailService implements OnModuleInit {
     // Use Gmail service shorthand if host is gmail — handles auth better
     const isGmail = host.includes('gmail.com') || host.includes('googlemail.com');
 
+    // Without these, nodemailer's defaults (60s+) let a transient SMTP hang
+    // block the whole app boot inside onModuleInit's verify().
+    const timeouts = {
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
+    };
+
     const config: nodemailer.TransportOptions = isGmail
       ? ({
           service: 'gmail',
           auth: { user, pass },
+          ...timeouts,
         } as any)
       : {
           host,
           port,
           secure: port === 465,
           auth: { user, pass },
+          ...timeouts,
           // Require valid TLS certificates — rejectUnauthorized:false enables
           // man-in-the-middle attacks on credentials and email content.
           tls: { rejectUnauthorized: true },
@@ -74,14 +85,9 @@ export class MailService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    // Try Resend API first (most reliable)
-    if (this.resendApiKey) {
-      this.logger.log('✅ Resend API key detected — will use Resend for email delivery.');
-      this.smtpReady = true;
-      return;
-    }
-
-    // Try SMTP
+    // SMTP is the primary channel; Resend is only a fallback. Without a
+    // verified domain Resend can deliver to the account owner's address
+    // alone (HTTP 403 for everyone else), so it cannot be trusted first.
     if (!this.transporter) {
       this.logger.warn(
         '⚠️  No email provider configured. OTPs/links will be logged to console.\n' +
@@ -105,6 +111,18 @@ export class MailService implements OnModuleInit {
         '   B) Free email (Resend): https://resend.com → set RESEND_API_KEY in .env (100 emails/day free)',
       );
     }
+
+    if (this.resendApiKey) {
+      this.logger.log('✅ Resend API key detected — will be used as fallback when SMTP is unavailable.');
+    }
+  }
+
+  // ── Delivery orchestrator ────────────────────────────────────────────────
+  private async deliver(to: string, subject: string, html: string, text: string): Promise<boolean> {
+    return (
+      (await this.sendViaSmtp(to, subject, html, text)) ||
+      (await this.sendViaResend(to, subject, html, text))
+    );
   }
 
   // ── Resend.com API sender ──────────────────────────────────────────────────
@@ -194,8 +212,7 @@ export class MailService implements OnModuleInit {
     `;
     const text = `Your SupaMeal verification code is: ${otp}\nIt expires in 5 minutes.`;
 
-    const sent = await this.sendViaResend(to, subject, html, text)
-      || await this.sendViaSmtp(to, subject, html, text);
+    const sent = await this.deliver(to, subject, html, text);
 
     if (!sent) {
       this.logger.warn(`[OTP] Email delivery attempt completed for ${to}.`);
@@ -224,8 +241,7 @@ export class MailService implements OnModuleInit {
     `;
     const text = `Reset your SupaMeal password: ${resetLink}\nThis link expires in 15 minutes.`;
 
-    const sent = await this.sendViaResend(to, subject, html, text)
-      || await this.sendViaSmtp(to, subject, html, text);
+    const sent = await this.deliver(to, subject, html, text);
 
     if (!sent) {
       // Only dump the live reset link to the console when no provider
@@ -284,8 +300,7 @@ export class MailService implements OnModuleInit {
     `;
     const text = `SupaMeal receipt — order #${orderId.slice(-6)}: ${amount.toFixed(2)} ${currency.toUpperCase()} paid to ${restaurantName || 'SupaMeal'}.`;
 
-    const sent = await this.sendViaResend(to, subject, html, text)
-      || await this.sendViaSmtp(to, subject, html, text);
+    const sent = await this.deliver(to, subject, html, text);
 
     if (!sent) {
       this.logger.warn(
@@ -300,8 +315,6 @@ export class MailService implements OnModuleInit {
       || process.env.SMTP_USER?.trim()
       || 'support@supameal.com';
 
-    this.printToConsole('CONTACT', supportEmail, `From ${dto.email}: ${dto.message}`);
-
     const subject = `SupaMeal Contact: ${escapeHtml(dto.fullName)}`;
     const safeName = escapeHtml(dto.fullName);
     const safeEmail = escapeHtml(dto.email);
@@ -309,7 +322,12 @@ export class MailService implements OnModuleInit {
     const html = `<p><strong>From:</strong> ${safeName} &lt;${safeEmail}&gt;</p><p>${safeMessage}</p>`;
     const text = `From: ${dto.fullName} <${dto.email}>\n\n${dto.message}`;
 
-    await this.sendViaResend(supportEmail, subject, html, text)
-      || await this.sendViaSmtp(supportEmail, subject, html, text);
+    const sent = await this.deliver(supportEmail, subject, html, text);
+
+    // Mirror the message on the console only when nothing delivered it —
+    // same rationale as the reset link above.
+    if (!sent) {
+      this.printToConsole('CONTACT', supportEmail, `From ${dto.email}: ${dto.message}`);
+    }
   }
 }

@@ -18,4 +18,3 @@ export class review {
 export const reviewschema = SchemaFactory.createForClass(review);
 
 reviewschema.index({ restaurantId: 1, createdAt: -1 });
-reviewschema.index({ customerId: 1 });
