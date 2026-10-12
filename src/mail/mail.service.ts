@@ -1,8 +1,10 @@
-import { Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { randomUUID } from 'crypto';
 import * as nodemailer from 'nodemailer';
 import { CreateMailDto } from './dto/create-mail.dto';
+import { NewsletterUpdateDto } from './dto/newsletter-update.dto';
 import { NewsletterSubscriber, NewsletterSubscriberDocument } from './schema/newsletter-subscriber.schema';
 
 /**
@@ -41,8 +43,9 @@ export class MailService implements OnModuleInit {
   private resendApiKey: string | null = null;
 
   constructor(
+    @Optional()
     @InjectModel(NewsletterSubscriber.name)
-    private readonly subscriberModel: Model<NewsletterSubscriberDocument>,
+    private readonly subscriberModel?: Model<NewsletterSubscriberDocument>,
   ) {
     this.resendApiKey = process.env.RESEND_API_KEY?.trim() || null;
     this.initTransporter();
@@ -301,7 +304,7 @@ export class MailService implements OnModuleInit {
           </div>
         </div>
         <hr style="border:none;border-top:1px solid #333;margin:24px 0;" />
-        <p style="color:#555;font-size:12px;text-align:center;">Questions about this charge? Contact ${escapeHtml(process.env.SUPPORT_EMAIL || 'support@supameal.com')}</p>
+        <p style="color:#555;font-size:12px;text-align:center;">Questions about this charge? Contact ${escapeHtml(process.env.SUPPORT_EMAIL || 'mugishawitness15@gmail.com')}</p>
       </div>
     `;
     const text = `SupaMeal receipt — order #${orderId.slice(-6)}: ${amount.toFixed(2)} ${currency.toUpperCase()} paid to ${restaurantName || 'SupaMeal'}.`;
@@ -319,7 +322,7 @@ export class MailService implements OnModuleInit {
   async sendContactEmail(dto: CreateMailDto) {
     const supportEmail = process.env.SUPPORT_EMAIL?.trim()
       || process.env.SMTP_USER?.trim()
-      || 'support@supameal.com';
+      || 'mugishawitness15@gmail.com';
 
     const subject = `SupaMeal Contact: ${escapeHtml(dto.fullName)}`;
     const safeName = escapeHtml(dto.fullName);
@@ -338,26 +341,35 @@ export class MailService implements OnModuleInit {
   }
 
   async subscribeToNewsletter(email: string) {
+    if (!this.subscriberModel) {
+      throw new ServiceUnavailableException('Newsletter subscriptions are not available right now.');
+    }
     const normalizedEmail = email.trim().toLowerCase();
-    await this.subscriberModel.findOneAndUpdate(
+    const subscriber = await this.subscriberModel.findOneAndUpdate(
       { email: normalizedEmail },
-      { $set: { isActive: true }, $setOnInsert: { email: normalizedEmail } },
+      {
+        $set: { isActive: true },
+        $setOnInsert: { email: normalizedEmail, unsubscribeToken: randomUUID() },
+      },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     ).exec();
 
     const supportEmail = process.env.SUPPORT_EMAIL?.trim()
       || process.env.SMTP_USER?.trim()
-      || 'support@supameal.com';
+      || 'mugishawitness15@gmail.com';
     const safeSupportEmail = escapeHtml(supportEmail);
+    const unsubscribeUrl = `${(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/newsletter/unsubscribe/${encodeURIComponent(subscriber!.unsubscribeToken)}`;
+    const safeUnsubscribeUrl = escapeHtml(unsubscribeUrl);
     const subject = 'Welcome to SupaMeal updates';
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;">
         <h1 style="color:#f5a623;font-size:22px;margin:0 0 18px;">Welcome to SupaMeal</h1>
         <p style="color:#e0e0e0;font-size:15px;line-height:1.6;">You’re subscribed to SupaMeal updates. We’ll send you news about new restaurants, dining offers, and platform updates.</p>
         <p style="color:#999;font-size:13px;line-height:1.6;">Questions? Contact <a style="color:#f5a623;" href="mailto:${safeSupportEmail}">${safeSupportEmail}</a>.</p>
+        <p style="color:#777;font-size:12px;"><a style="color:#f5a623;" href="${safeUnsubscribeUrl}">Unsubscribe</a> from these updates.</p>
       </div>
     `;
-    const text = 'You’re subscribed to SupaMeal updates. We’ll send you news about new restaurants, dining offers, and platform updates.';
+    const text = `You’re subscribed to SupaMeal updates. We’ll send you news about new restaurants, dining offers, and platform updates.\n\nUnsubscribe: ${unsubscribeUrl}`;
     const emailSent = await this.deliver(normalizedEmail, subject, html, text);
 
     if (!emailSent) {
@@ -369,5 +381,55 @@ export class MailService implements OnModuleInit {
         : 'Subscription saved. Email delivery is temporarily unavailable.',
       emailSent,
     };
+  }
+
+  async unsubscribeFromNewsletter(token: string) {
+    if (!this.subscriberModel || !token) {
+      throw new ServiceUnavailableException('Newsletter preferences are not available right now.');
+    }
+    await this.subscriberModel.findOneAndUpdate(
+      { unsubscribeToken: token },
+      { $set: { isActive: false } },
+    ).exec();
+    return { message: 'Newsletter preferences updated.' };
+  }
+
+  async sendNewsletterUpdate(dto: NewsletterUpdateDto) {
+    if (!this.subscriberModel) {
+      throw new ServiceUnavailableException('Newsletter subscriptions are not available right now.');
+    }
+    const subscribers = await this.subscriberModel.find({ isActive: true })
+      .select('email unsubscribeToken')
+      .lean()
+      .exec();
+    if (!subscribers.length) return { sent: 0, failed: 0, total: 0 };
+
+    const subject = `[SupaMeal Update] ${dto.subject.trim()}`;
+    const safeSubject = escapeHtml(dto.subject.trim());
+    const safeMessage = escapeHtml(dto.message.trim()).replace(/\n/g, '<br />');
+    const supportEmail = process.env.SUPPORT_EMAIL?.trim()
+      || process.env.SMTP_USER?.trim()
+      || 'mugishawitness15@gmail.com';
+    const results: boolean[] = [];
+
+    for (let start = 0; start < subscribers.length; start += 10) {
+      const batch = subscribers.slice(start, start + 10);
+      const batchResults = await Promise.all(batch.map((subscriber) => {
+        const unsubscribeUrl = `${(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/newsletter/unsubscribe/${encodeURIComponent(subscriber.unsubscribeToken)}`;
+        const safeUrl = escapeHtml(unsubscribeUrl);
+        const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;"><h1 style="color:#f5a623;font-size:22px;">SupaMeal Update</h1><h2 style="color:#e0e0e0;font-size:18px;">${safeSubject}</h2><p style="color:#e0e0e0;font-size:15px;line-height:1.7;">${safeMessage}</p><p style="color:#999;font-size:12px;">Questions? <a style="color:#f5a623;" href="mailto:${escapeHtml(supportEmail)}">Contact us</a>. <a style="color:#f5a623;" href="${safeUrl}">Unsubscribe</a></p></div>`;
+        const text = `${dto.subject.trim()}\n\n${dto.message.trim()}\n\nUnsubscribe: ${unsubscribeUrl}`;
+        return this.deliver(subscriber.email, subject, html, text);
+      }));
+      results.push(...batchResults);
+    }
+
+    const sent = results.filter(Boolean).length;
+    const failed = results.length - sent;
+    if (sent === 0) {
+      throw new ServiceUnavailableException('Newsletter delivery failed. Check the configured email provider and try again.');
+    }
+    this.logger.log(`Newsletter update delivered to ${sent} of ${results.length} subscribers (${failed} failed).`);
+    return { sent, failed, total: results.length };
   }
 }

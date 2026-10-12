@@ -7,7 +7,7 @@ export type PlatformSettingsDocument = PlatformSettings & Document;
 export class PlatformSettings {
   @Prop({ default: 'SupaMeal' })
   platformName!: string;
-  @Prop({ default: 'support@supameal.com' })
+  @Prop({ default: 'mugishawitness15@gmail.com' })
   supportEmail!: string;
   @Prop({ default: 10 })
   commissionRate!: number;

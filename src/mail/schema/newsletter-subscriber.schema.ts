@@ -10,6 +10,9 @@ export class NewsletterSubscriber {
 
   @Prop({ default: true, index: true })
   isActive!: boolean;
+
+  @Prop({ required: true, unique: true, index: true })
+  unsubscribeToken!: string;
 }
 
 export const NewsletterSubscriberSchema = SchemaFactory.createForClass(NewsletterSubscriber);
