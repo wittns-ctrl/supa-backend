@@ -422,6 +422,7 @@ export class BookingsService {
         month: 'short',
         day: 'numeric',
       }),
+      bookingDate: obj.bookingDate,
       time: obj.bookingTime,
       guests: obj.guests,
       address,

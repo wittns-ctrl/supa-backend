@@ -1,4 +1,4 @@
-import { Document, Types } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 import { Prop, SchemaFactory, Schema } from '@nestjs/mongoose';
 
 export type restaurantDocument = restaurant & Document;
@@ -28,7 +28,7 @@ export class restaurant {
   name!: string;
   @Prop({ required: true })
   description!: string;
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
   ownerId!: Types.ObjectId;
   @Prop({ type: Location, required: true })
   location!: Location;

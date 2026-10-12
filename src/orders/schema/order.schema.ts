@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 
 export enum OrderStatus {
   PENDING = 'pending',
@@ -14,7 +14,7 @@ export enum OrderStatus {
 
 @Schema({ _id: false })
 export class OrderItem {
-  @Prop({ type: Types.ObjectId, required: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, required: true })
   menuItemId!: Types.ObjectId;
   @Prop({ required: true })
   name!: string;
@@ -54,9 +54,9 @@ export type orderDocument = order & Document;
 
 @Schema({ timestamps: true })
 export class order {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true, index: true })
   customerId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'restaurant', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'restaurant', required: true, index: true })
   restaurantId!: Types.ObjectId;
   @Prop({ type: [OrderItem], required: true })
   items!: OrderItem[];

@@ -175,6 +175,9 @@ export class PaymentsService {
       amount,
       status: Payments.PAID,
       method: PaymentMethod.CASH,
+      // The client confirms with the returned paymentIntentId — without it
+      // confirmPayment() can't find this record and 404s.
+      paymentIntentId: txId,
       transactionId: txId,
       currency: this.currency,
       metadata: { ...metadata, fake: 'true' },

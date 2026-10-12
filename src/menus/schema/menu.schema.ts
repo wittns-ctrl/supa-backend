@@ -1,11 +1,11 @@
 import { SchemaFactory, Prop, Schema } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 
 export type menuDocument = menu & Document;
 
 @Schema({ timestamps: true })
 export class menu {
-  @Prop({ type: Types.ObjectId, ref: 'restaurant', required: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'restaurant', required: true })
   restaurant!: Types.ObjectId;
   @Prop({ required: true })
   name!: string;

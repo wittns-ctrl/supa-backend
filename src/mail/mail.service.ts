@@ -1,6 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import * as nodemailer from 'nodemailer';
 import { CreateMailDto } from './dto/create-mail.dto';
+import { NewsletterSubscriber, NewsletterSubscriberDocument } from './schema/newsletter-subscriber.schema';
 
 /**
  * MailService — tries SMTP first (works with any recipient); falls back to
@@ -37,7 +40,10 @@ export class MailService implements OnModuleInit {
   private smtpReady = false;
   private resendApiKey: string | null = null;
 
-  constructor() {
+  constructor(
+    @InjectModel(NewsletterSubscriber.name)
+    private readonly subscriberModel: Model<NewsletterSubscriberDocument>,
+  ) {
     this.resendApiKey = process.env.RESEND_API_KEY?.trim() || null;
     this.initTransporter();
   }
@@ -324,10 +330,44 @@ export class MailService implements OnModuleInit {
 
     const sent = await this.deliver(supportEmail, subject, html, text);
 
-    // Mirror the message on the console only when nothing delivered it —
-    // same rationale as the reset link above.
     if (!sent) {
-      this.printToConsole('CONTACT', supportEmail, `From ${dto.email}: ${dto.message}`);
+      throw new ServiceUnavailableException(
+        'Email delivery is not configured. Please try again later or contact support directly.',
+      );
     }
+  }
+
+  async subscribeToNewsletter(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    await this.subscriberModel.findOneAndUpdate(
+      { email: normalizedEmail },
+      { $set: { isActive: true }, $setOnInsert: { email: normalizedEmail } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).exec();
+
+    const supportEmail = process.env.SUPPORT_EMAIL?.trim()
+      || process.env.SMTP_USER?.trim()
+      || 'support@supameal.com';
+    const safeSupportEmail = escapeHtml(supportEmail);
+    const subject = 'Welcome to SupaMeal updates';
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;">
+        <h1 style="color:#f5a623;font-size:22px;margin:0 0 18px;">Welcome to SupaMeal</h1>
+        <p style="color:#e0e0e0;font-size:15px;line-height:1.6;">You’re subscribed to SupaMeal updates. We’ll send you news about new restaurants, dining offers, and platform updates.</p>
+        <p style="color:#999;font-size:13px;line-height:1.6;">Questions? Contact <a style="color:#f5a623;" href="mailto:${safeSupportEmail}">${safeSupportEmail}</a>.</p>
+      </div>
+    `;
+    const text = 'You’re subscribed to SupaMeal updates. We’ll send you news about new restaurants, dining offers, and platform updates.';
+    const emailSent = await this.deliver(normalizedEmail, subject, html, text);
+
+    if (!emailSent) {
+      this.logger.warn(`Newsletter subscription saved for ${normalizedEmail}, but the welcome email could not be delivered.`);
+    }
+    return {
+      message: emailSent
+        ? 'Subscription confirmed. Check your inbox for a welcome email.'
+        : 'Subscription saved. Email delivery is temporarily unavailable.',
+      emailSent,
+    };
   }
 }

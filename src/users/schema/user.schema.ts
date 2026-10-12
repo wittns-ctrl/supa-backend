@@ -1,5 +1,5 @@
 import { Prop, SchemaFactory, Schema } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 
 export type UserDocument = User & Document;
 
@@ -75,7 +75,7 @@ export class User {
   profile?: Profile;
   @Prop({ type: DeliveryAddress })
   deliveryAddress?: DeliveryAddress;
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'restaurant' }], default: [] })
+  @Prop({ type: [{ type: MongooseSchema.Types.ObjectId, ref: 'restaurant' }], default: [] })
   favorites!: Types.ObjectId[];
   // OAuth fields
   @Prop()
