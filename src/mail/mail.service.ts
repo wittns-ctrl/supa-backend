@@ -345,6 +345,15 @@ export class MailService implements OnModuleInit {
       throw new ServiceUnavailableException('Newsletter subscriptions are not available right now.');
     }
     const normalizedEmail = email.trim().toLowerCase();
+    const existingSubscriber = await this.subscriberModel.findOne({ email: normalizedEmail }).exec();
+    if (existingSubscriber?.isActive) {
+      return {
+        message: 'This email is already subscribed.',
+        alreadySubscribed: true,
+        emailSent: false,
+      };
+    }
+
     const subscriber = await this.subscriberModel.findOneAndUpdate(
       { email: normalizedEmail },
       {
@@ -379,6 +388,7 @@ export class MailService implements OnModuleInit {
       message: emailSent
         ? 'Subscription confirmed. Check your inbox for a welcome email.'
         : 'Subscription saved. Email delivery is temporarily unavailable.',
+      alreadySubscribed: false,
       emailSent,
     };
   }
