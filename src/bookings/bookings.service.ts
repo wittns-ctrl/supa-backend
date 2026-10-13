@@ -159,6 +159,7 @@ export class BookingsService {
       if (customerId) filter.customerId = customerId;
     } else {
       filter.customerId = userId;
+      filter.hiddenForCustomer = { $ne: true };
     }
 
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
@@ -196,6 +197,10 @@ export class BookingsService {
       .populate('restaurantId', 'name location cuisine ownerId')
       .populate('customerId', 'name email phone');
     if (!booking) throw new NotFoundException('Booking not found');
+
+    if (userRole === roles.CUSTOMER && booking.hiddenForCustomer) {
+      throw new NotFoundException('Booking not found');
+    }
 
     await this.assertCanAccessBooking(booking, userId, userRole);
     return this.formatBooking(booking);
@@ -353,6 +358,25 @@ export class BookingsService {
     );
     if (!updated) throw new NotFoundException('Booking not found');
     return { message: 'Booking cancelled' };
+  }
+
+  async removeFromCustomerHistory(id: string, customerId: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid booking id');
+    }
+    const result = await this.bookingsModel.updateOne(
+      {
+        _id: id,
+        customerId,
+        status: { $in: [reviewsEnums.CANCELLED, reviewsEnums.REJECTED, reviewsEnums.COMPLETED] },
+        hiddenForCustomer: { $ne: true },
+      },
+      { $set: { hiddenForCustomer: true } },
+    );
+    if (result.modifiedCount === 0) {
+      throw new NotFoundException('Booking was not found in your history');
+    }
+    return { message: 'Booking removed from your history' };
   }
 
   private async assertCanAccessBooking(b: bookingsDocument, userId?: string, userRole?: string) {

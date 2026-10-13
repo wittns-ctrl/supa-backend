@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Patch,
+  Delete,
   Param,
   Query,
   UseGuards,
@@ -62,6 +63,16 @@ export class OrdersController {
     @CurrentUser() user: { id: string },
   ) {
     return this.ordersService.reorder(id, user.id);
+  }
+
+  @Delete(':id/history')
+  @UseGuards(RolesGuard)
+  @Roles(roles.CUSTOMER)
+  hideFromCustomerHistory(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.ordersService.hideFromCustomerHistory(id, user.id);
   }
 
   @Get(':id')

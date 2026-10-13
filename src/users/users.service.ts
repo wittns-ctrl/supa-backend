@@ -221,15 +221,17 @@ export class UsersService {
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const totalOrders = await this.orderModel.countDocuments({ customerId: userId });
+    const visibleOrders = { customerId: userId, hiddenForCustomer: { $ne: true } };
+    const totalOrders = await this.orderModel.countDocuments(visibleOrders);
     const ordersThisMonthCount = await this.orderModel.countDocuments({
-      customerId: userId,
+      ...visibleOrders,
       createdAt: { $gte: startOfMonth },
     });
 
     const bookingFilter: any = {
       customerId: userId,
       status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
+      hiddenForCustomer: { $ne: true },
     };
 
     const upcomingBookingsCount = await this.bookingsModel.countDocuments(bookingFilter);
@@ -259,7 +261,7 @@ export class UsersService {
     }
 
     const recentOrdersRaw = await this.orderModel
-      .find({ customerId: userId })
+      .find(visibleOrders)
       .populate('restaurantId', 'name')
       .sort({ createdAt: -1 })
       .limit(5);
@@ -295,7 +297,7 @@ export class UsersService {
     });
 
     const upcomingBookingsRaw = await this.bookingsModel
-      .find({ customerId: userId })
+      .find({ ...bookingFilter })
       .populate('restaurantId', 'name')
       .sort({ createdAt: -1 })
       .limit(3);

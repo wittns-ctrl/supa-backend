@@ -241,6 +241,7 @@ export class OrdersService {
       if (customerId) filter.customerId = customerId;
     } else {
       filter.customerId = userId;
+      filter.hiddenForCustomer = { $ne: true };
     }
 
     const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
@@ -287,6 +288,9 @@ export class OrdersService {
       .populate('restaurantId', 'name ownerId')
       .populate('customerId', 'name email phone');
     if (!found) throw new NotFoundException('Order not found');
+    if (userRole === roles.CUSTOMER && found.hiddenForCustomer) {
+      throw new NotFoundException('Order not found');
+    }
 
     const ownerId =
       typeof found.restaurantId === 'object'
@@ -458,6 +462,25 @@ export class OrdersService {
       timeSlot: original.timeSlot,
       promoCode: original.promoCode,
     });
+  }
+
+  async hideFromCustomerHistory(id: string, customerId: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid order id');
+    }
+    const result = await this.orderModel.updateOne(
+      {
+        _id: id,
+        customerId,
+        status: { $in: [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REJECTED] },
+        hiddenForCustomer: { $ne: true },
+      },
+      { $set: { hiddenForCustomer: true } },
+    );
+    if (result.modifiedCount === 0) {
+      throw new NotFoundException('Order was not found in your history');
+    }
+    return { message: 'Order removed from your history' };
   }
 
   private buildTimelineForStatus(status: OrderStatus) {

@@ -31,6 +31,10 @@ export class bookings {
   ownerNote?: string;
   @Prop()
   rejectionReason?: string;
+  // Keep the reservation record for restaurant operations while allowing
+  // customers to clear completed/cancelled items from their own history.
+  @Prop({ default: false, index: true })
+  hiddenForCustomer!: boolean;
 }
 
 export const bookingschema = SchemaFactory.createForClass(bookings);

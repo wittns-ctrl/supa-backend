@@ -82,6 +82,10 @@ export class order {
   rider?: string;
   @Prop({ type: [OrderTimelineStep], default: [] })
   timeline!: OrderTimelineStep[];
+  // Customer history removal is a per-customer hide; keep the order and its
+  // payment record available for restaurant operations and accounting.
+  @Prop({ default: false, index: true })
+  hiddenForCustomer!: boolean;
 }
 
 export const orderSchema = SchemaFactory.createForClass(order);

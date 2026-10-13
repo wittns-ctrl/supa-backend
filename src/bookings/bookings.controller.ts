@@ -77,4 +77,14 @@ export class BookingsController {
   remove(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
     return this.bookingsService.remove(id, user.id, user.role);
   }
+
+  @Delete(':id/history')
+  @UseGuards(RolesGuard)
+  @Roles(roles.CUSTOMER)
+  removeFromCustomerHistory(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.bookingsService.removeFromCustomerHistory(id, user.id);
+  }
 }
