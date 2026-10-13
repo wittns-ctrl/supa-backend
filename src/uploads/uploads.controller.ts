@@ -53,7 +53,7 @@ const SAFE_FILENAME = /^[a-f0-9-]{36}\.(jpg|png|webp)$/i;
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UploadsController {
   @Post()
-  @Roles(roles.OWNER, roles.ADMIN)
+  @Roles(roles.CUSTOMER, roles.OWNER, roles.ADMIN)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
