@@ -71,6 +71,47 @@ export class RestaurantsService {
     return this.formatRestaurant(created);
   }
 
+  async createRestaurantForAccount(
+    createRestdto: CreateRestaurantDto,
+    accountId: string,
+  ) {
+    const user = await this.userModel.findById(accountId);
+    if (!user) throw new NotFoundException('user not found');
+    if (user.role !== roles.CUSTOMER && user.role !== roles.OWNER) {
+      throw new UnauthorizedException(
+        'Only a signed-in customer or restaurant owner can register a restaurant',
+      );
+    }
+
+    const previousRole = user.role;
+    if (previousRole === roles.CUSTOMER) {
+      user.role = roles.OWNER;
+      await user.save();
+    }
+
+    try {
+      const restaurant = await this.createRestaurant({
+        ...createRestdto,
+        ownerId: user._id.toString(),
+      });
+      return {
+        ...restaurant,
+        ownerAccount: {
+          id: user._id.toString(),
+          name: user.name,
+          email: user.email,
+          role: roles.OWNER,
+        },
+      };
+    } catch (error) {
+      if (previousRole === roles.CUSTOMER) {
+        user.role = roles.CUSTOMER;
+        await user.save();
+      }
+      throw error;
+    }
+  }
+
   async findAll(query: {
     search?: string;
     cuisine?: string;

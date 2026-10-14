@@ -32,14 +32,18 @@ export class RestaurantsController {
     @Body() createRestaurantDto: CreateRestaurantDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    if (user.role === roles.OWNER) {
-      createRestaurantDto.ownerId = user.id;
-    } else if (user.role !== roles.ADMIN) {
-      throw new UnauthorizedException(
-        'Only restaurant owners or administrators can register restaurants',
+    if (user.role === roles.CUSTOMER || user.role === roles.OWNER) {
+      return this.restaurantsService.createRestaurantForAccount(
+        createRestaurantDto,
+        user.id,
       );
     }
-    return this.restaurantsService.createRestaurant(createRestaurantDto);
+    if (user.role === roles.ADMIN) {
+      return this.restaurantsService.createRestaurant(createRestaurantDto);
+    }
+    throw new UnauthorizedException(
+      'Sign in to a customer account before registering a restaurant',
+    );
   }
 
   @Get()

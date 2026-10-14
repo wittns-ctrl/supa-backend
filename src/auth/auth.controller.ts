@@ -145,10 +145,11 @@ export class AuthController implements OnModuleDestroy {
   @Get('google')
   googleAuth(@Req() req: any, @Res() res: Response) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const errorPage = req.query?.role === 'owner' ? '/owner-login' : '/login';
     if (!this.googleConfigured) {
       this.logger.warn('Google OAuth requested but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set in .env');
       return res.redirect(
-        `${frontendUrl}/login?error=${encodeURIComponent('Google Sign In is not configured on the server. Please check backend .env configuration.')}`,
+        `${frontendUrl}${errorPage}?error=${encodeURIComponent('Google Sign In is not configured on the server. Please check backend .env configuration.')}`,
       );
     }
     // CSRF protection: a fresh one-time state is minted per request and sent
@@ -164,7 +165,7 @@ export class AuthController implements OnModuleDestroy {
       // Only invoked on failure — on success passport has already redirected
       this.logger.warn('Google OAuth start failed', err);
       return res.redirect(
-        `${frontendUrl}/login?error=${encodeURIComponent('Could not start Google Sign In. Please try again.')}`,
+        `${frontendUrl}${errorPage}?error=${encodeURIComponent('Could not start Google Sign In. Please try again.')}`,
       );
     });
   }
