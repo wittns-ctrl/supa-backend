@@ -101,14 +101,22 @@ export class UsersService {
   }
 
   /** Admin-only role assignment — the safe path for promote/demote. */
-  async setRole(id: string, role: 'customer' | 'owner' | 'admin') {
+  async setRole(id: string, role: 'customer' | 'admin') {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid user id');
     }
-    const user = await this.userModel
-      .findByIdAndUpdate(id, { role }, { new: true, runValidators: true })
-      .select('-password -refreshToken');
+    const user = await this.userModel.findById(id);
     if (!user) throw new NotFoundException('User not found');
+    if (user.role !== role) {
+      user.role = role as roles;
+      // Access JWTs consult the persisted session on every request, so clearing
+      // sessions immediately invalidates existing access and refresh tokens.
+      user.authSessions = [];
+      user.refreshToken = undefined;
+      user.previousRefreshToken = undefined;
+      user.previousRefreshTokenExpiresAt = undefined;
+      await user.save();
+    }
     return this.formatUser(user);
   }
 
@@ -135,10 +143,11 @@ export class UsersService {
   }
 
   async setStatus(id: string, status: UserStatus) {
-    const user = await this.userModel
-      .findByIdAndUpdate(id, { status }, { new: true })
-      .select('-password -refreshToken');
+    const user = await this.userModel.findById(id);
     if (!user) throw new NotFoundException('User not found');
+    user.status = status;
+    if (status === UserStatus.BLOCKED) user.authSessions = [];
+    await user.save();
     return this.formatUser(user);
   }
 

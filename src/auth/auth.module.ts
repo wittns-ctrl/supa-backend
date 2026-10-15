@@ -11,11 +11,16 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { OAuthStateService } from './oauth-state.service';
+import { OAuthCodeRecord, OAuthCodeRecordSchema, OAuthStateRecord, OAuthStateRecordSchema } from './schema/oauth-record.schema';
 
 @Module({
   imports: [
     MailModule,
-    MongooseModule.forFeature([{ name: User.name, schema: Userschema }]),
+    MongooseModule.forFeature([
+      { name: User.name, schema: Userschema },
+      { name: OAuthStateRecord.name, schema: OAuthStateRecordSchema },
+      { name: OAuthCodeRecord.name, schema: OAuthCodeRecordSchema },
+    ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -89,6 +89,6 @@ export class UpdateUserDto {
 
 /** Admin-only role assignment (promote/demote accounts). */
 export class SetUserRoleDto {
-  @IsIn(['customer', 'owner', 'admin'])
-  role!: 'customer' | 'owner' | 'admin';
+  @IsIn(['customer', 'admin'])
+  role!: 'customer' | 'admin';
 }

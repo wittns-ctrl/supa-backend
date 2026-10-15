@@ -125,8 +125,9 @@ export class AppleAuthService {
     }
 
     const email = claims.email || emailFromUserPayload;
-    if (!email) {
-      throw new Error('Apple account did not provide an email address');
+    const emailVerified = claims.email_verified === true || claims.email_verified === 'true';
+    if (!email || !emailVerified) {
+      throw new Error('Apple account did not provide a verified email address');
     }
 
     const displayName =

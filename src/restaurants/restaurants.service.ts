@@ -144,10 +144,8 @@ export class RestaurantsService implements OnModuleInit {
     const filter: Record<string, unknown> = {};
 
     if (query.approvedOnly !== 'false') {
-      // Make registrations visible immediately, including restaurants created
-      // before publication became automatic. Rejected and suspended listings
-      // remain hidden from public discovery.
-      filter.status = { $in: [RestaurantStatus.ACTIVE, RestaurantStatus.PENDING] };
+      filter.status = RestaurantStatus.ACTIVE;
+      filter.isApproved = true;
     }
 
     if (query.search) {

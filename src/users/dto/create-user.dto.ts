@@ -24,6 +24,6 @@ export class CreateUserDto {
   phone?: string;
 
   @IsOptional()
-  @IsIn(['customer', 'owner', 'admin', 'restaurant_owner'])
+  @IsIn(['customer'])
   role?: string;
 }

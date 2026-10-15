@@ -113,13 +113,13 @@ export class AuthService {
     if (!signupdto.password) {
       throw new BadRequestException('Password is required');
     }
+    validateBcryptPassword(signupdto.password);
     const hashedPassword = await bcrypt.hash(signupdto.password, salt);
 
     const otp = randomInt(100000, 999999).toString();
     const expires = new Date();
     expires.setMinutes(expires.getMinutes() + 5);
 
-    validateBcryptPassword(signupdto.password);
     const role = roles.CUSTOMER;
     const autoVerify = false;
 
@@ -150,13 +150,14 @@ export class AuthService {
 
   async verifyOtp(VerifyDto: emailverificationDto) {
     const user = await this.findUserByEmail(VerifyDto.email);
+    const genericError = 'Invalid or expired verification code';
 
     if (!user) {
-      throw new BadRequestException('Invalid or expired verification code');
+      throw new BadRequestException(genericError);
     }
 
     if (user.isVerified === true) {
-      return { message: 'user already verified' };
+      throw new BadRequestException(genericError);
     }
 
     if (
@@ -164,7 +165,7 @@ export class AuthService {
       !user.emailVerificationOtpExpires ||
       user.emailVerificationOtpExpires < new Date()
     ) {
-      throw new BadRequestException('invalid or expired otp');
+      throw new BadRequestException(genericError);
     }
 
     // Brute-force protection: limit verification attempts per OTP window
@@ -183,7 +184,7 @@ export class AuthService {
     if (!safeEqualHex(providedHash, user.emailVerificationOtp)) {
       user.emailVerificationOtpAttempts = attempts;
       await user.save();
-      throw new BadRequestException('invalid or expired otp');
+      throw new BadRequestException(genericError);
     }
 
     user.emailVerificationOtp = undefined;
@@ -205,7 +206,7 @@ export class AuthService {
     const user = await this.findUserByEmail(signinDto.email);
 
     if (!user) {
-      throw new UnauthorizedException('invalid email or password');
+      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
     }
 
       if (user.status === 'blocked') {
@@ -225,8 +226,7 @@ export class AuthService {
     const isMatch = await bcrypt.compare(signinDto.password, user.password);
 
     if (!isMatch) {
-      // Same message for missing user and wrong password — no enumeration
-      throw new UnauthorizedException('invalid email or password');
+      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
     }
 
     const tokens = await this.generateTokens(user);
@@ -277,7 +277,7 @@ export class AuthService {
 
     if (user) {
       // Link OAuth provider if this is their first OAuth login
-      if (!user.oauthProvider) {
+      if (!user.oauthProvider && user.email.toLowerCase() === normalizedEmail) {
         user.oauthProvider = data.provider;
         user.oauthProviderId = data.providerId;
       }
@@ -499,7 +499,7 @@ export class AuthService {
     session.previousRefreshTokenExpiresAt = new Date(Date.now() + REFRESH_GRACE_MS);
     const nextRefreshToken = this.jwtservice.sign(claims as any, {
       secret: process.env.JWT_REFRESH,
-      expiresIn: process.env.JWT_REFRESH_TTL || '7d',
+      expiresIn: (process.env.JWT_REFRESH_TTL || '7d') as any,
     });
     session.refreshTokenHash = hashToken(nextRefreshToken);
     await user.save();

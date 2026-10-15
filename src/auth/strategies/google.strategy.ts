@@ -43,10 +43,14 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   ): Promise<any> {
     const { name, emails, photos } = profile;
     const email = emails?.[0]?.value;
+    const emailVerified = profile?._json?.email_verified === true;
     const displayName = `${name?.givenName || ''} ${name?.familyName || ''}`.trim();
     const imageurl = photos?.[0]?.value;
 
     try {
+      if (!email || !emailVerified) {
+        throw new Error('Google did not provide a verified email address');
+      }
       const result = await this.authService.oauthSignIn({
         email,
         name: displayName,

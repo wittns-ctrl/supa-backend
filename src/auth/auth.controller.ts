@@ -11,7 +11,6 @@ import {
   Optional,
   UnauthorizedException,
   BadRequestException,
-  OnModuleDestroy,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
@@ -20,7 +19,6 @@ import { emailverificationDto } from './dto/emailVerification.dto';
 import { loginAuthDto } from './dto/login-auth.dto';
 import { ForgotAuthDto } from './dto/Forgot.dto';
 import { resetAuthDto } from './dto/reset-auth.dto';
-import { LogoutAuthDto } from './dto/Logout.dto';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import { GoogleStrategy } from './strategies/google.strategy';
@@ -28,6 +26,10 @@ import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { OAuthCodeRecord } from './schema/oauth-record.schema';
 import passport from 'passport';
 import { OAuthStateService } from './oauth-state.service';
 import { isProductionEnv } from 'src/config/env.validation';
@@ -35,38 +37,47 @@ import { isProductionEnv } from 'src/config/env.validation';
 // Short-lived one-time codes for the OAuth code exchange flow. Tokens are
 // never placed in the redirect URL — the frontend swaps a code for tokens.
 const OAUTH_CODE_TTL_MS = 60_000;
+const REFRESH_COOKIE_DEFAULT_MS = 7 * 24 * 60 * 60 * 1000;
 
-interface PendingOAuthCode {
-  result: { accessToken: string; refreshToken: string; user: unknown };
-  expiresAt: number;
+function refreshCookieMaxAge(): number {
+  const value = process.env.JWT_REFRESH_TTL || '7d';
+  const match = /^(\d+)(ms|s|m|h|d)$/.exec(value);
+  if (!match) return REFRESH_COOKIE_DEFAULT_MS;
+  const scale: Record<string, number> = {
+    ms: 1,
+    s: 1000,
+    m: 60_000,
+    h: 3_600_000,
+    d: 86_400_000,
+  };
+  return Number(match[1]) * scale[match[2]];
+}
+
+function refreshCookieOptions() {
+  const configured = (process.env.COOKIE_SAME_SITE || 'lax').toLowerCase();
+  const sameSite = ['strict', 'none'].includes(configured) ? configured : 'lax';
+  return {
+    httpOnly: true,
+    secure: isProductionEnv() || sameSite === 'none',
+    sameSite: sameSite as 'lax' | 'strict' | 'none',
+    path: '/auth',
+  };
 }
 
 @Controller('auth')
-export class AuthController implements OnModuleDestroy {
+export class AuthController {
   private readonly logger = new Logger(AuthController.name);
   private googleConfigured: boolean;
-  private pendingCodes = new Map<string, PendingOAuthCode>();
-  private readonly codePurgeTimer: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly authService: AuthService,
     private readonly appleAuthService: AppleAuthService,
     private readonly oauthState: OAuthStateService,
+    @InjectModel(OAuthCodeRecord.name)
+    private readonly oauthCodeModel: Model<OAuthCodeRecord>,
     @Optional() private readonly googleStrategy: GoogleStrategy,
   ) {
     this.googleConfigured = this.googleStrategy?.isConfigured ?? false;
-    // Periodically purge expired codes to keep the map bounded
-    this.codePurgeTimer = setInterval(() => {
-      const now = Date.now();
-      for (const [code, entry] of this.pendingCodes) {
-        if (entry.expiresAt < now) this.pendingCodes.delete(code);
-      }
-    }, OAUTH_CODE_TTL_MS);
-    this.codePurgeTimer.unref?.();
-  }
-
-  onModuleDestroy() {
-    clearInterval(this.codePurgeTimer);
   }
 
   private readCookie(req: any, name: string): string | undefined {
@@ -76,14 +87,25 @@ export class AuthController implements OnModuleDestroy {
     try { return decodeURIComponent(value.slice(name.length + 1)); } catch { return undefined; }
   }
 
+  private assertTrustedOrigin(req: any) {
+    const origin = req?.headers?.origin;
+    const configuredOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => {
+        try { return new URL(value).origin; } catch { return value; }
+      });
+    if (!origin || !configuredOrigins.includes(origin)) {
+      throw new UnauthorizedException('Untrusted request origin');
+    }
+  }
+
   private authResponse(res: Response, result: any) {
     if (result?.refreshToken) {
       res.cookie('supa_refresh', result.refreshToken, {
-        httpOnly: true,
-        secure: isProductionEnv(),
-        sameSite: 'lax',
-        path: '/auth',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
+        ...refreshCookieOptions(),
+        maxAge: refreshCookieMaxAge(),
       });
     }
     const { refreshToken: _refreshToken, ...body } = result || {};
@@ -122,8 +144,10 @@ export class AuthController implements OnModuleDestroy {
 
   @Post('reset')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  resetpassword(@Body() resetdto: resetAuthDto) {
-    return this.authService.resetpassword(resetdto);
+  async resetpassword(@Body() resetdto: resetAuthDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.authService.resetpassword(resetdto);
+    res.clearCookie('supa_refresh', refreshCookieOptions());
+    return result;
   }
 
   @Post('logout')
@@ -132,16 +156,22 @@ export class AuthController implements OnModuleDestroy {
     @Res({ passthrough: true }) res: Response,
     @CurrentUser() user: { id: string; email: string; role: string; sessionId: string },
   ) {
-    res.clearCookie('supa_refresh', { httpOnly: true, secure: isProductionEnv(), sameSite: 'lax', path: '/auth' });
+    res.clearCookie('supa_refresh', refreshCookieOptions());
     return this.authService.Logout({}, user);
   }
 
   @Post('refresh')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async refresh(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+    this.assertTrustedOrigin(req);
     const refreshToken = this.readCookie(req, 'supa_refresh');
     if (!refreshToken) throw new UnauthorizedException('Refresh session is missing');
-    return this.authResponse(res, await this.authService.refreshAccessToken(refreshToken));
+    try {
+      return this.authResponse(res, await this.authService.refreshAccessToken(refreshToken));
+    } catch (error) {
+      res.clearCookie('supa_refresh', refreshCookieOptions());
+      throw error;
+    }
   }
 
   // ──────────────────────────────────────────
@@ -149,15 +179,14 @@ export class AuthController implements OnModuleDestroy {
   // ──────────────────────────────────────────
   @Post('oauth/exchange')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  exchangeCode(@Body() body: { code: string }, @Res({ passthrough: true }) res: Response) {
+  async exchangeCode(@Body() body: { code: string }, @Res({ passthrough: true }) res: Response) {
     if (!body?.code) throw new BadRequestException('code is required');
-    const entry = this.pendingCodes.get(body.code);
+    const codeHash = createHash('sha256').update(body.code).digest('hex');
+    const entry = await this.oauthCodeModel.findOneAndDelete({
+      codeHash,
+      expiresAt: { $gt: new Date() },
+    }).exec();
     if (!entry) {
-      throw new UnauthorizedException('Invalid or expired OAuth code');
-    }
-    // One-time use
-    this.pendingCodes.delete(body.code);
-    if (entry.expiresAt < Date.now()) {
       throw new UnauthorizedException('Invalid or expired OAuth code');
     }
     return this.authResponse(res, entry.result);
@@ -167,7 +196,7 @@ export class AuthController implements OnModuleDestroy {
   // Google OAuth
   // ──────────────────────────────────────────
   @Get('google')
-  googleAuth(@Req() req: any, @Res() res: Response) {
+  async googleAuth(@Req() req: any, @Res() res: Response) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const errorPage = req.query?.role === 'owner' ? '/owner-login' : '/login';
     if (!this.googleConfigured) {
@@ -179,7 +208,7 @@ export class AuthController implements OnModuleDestroy {
     // CSRF protection: a fresh one-time state is minted per request and sent
     // to Google as the OAuth2 `state` parameter. Google echoes it back on the
     // callback, where it is validated and burned (see googleCallback).
-    const state = this.oauthState.issue();
+    const state = await this.oauthState.issue();
     const authenticate = passport.authenticate('google', {
       session: false,
       state, // passport-oauth2 forwards caller-provided state to the provider
@@ -207,7 +236,7 @@ export class AuthController implements OnModuleDestroy {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     // The state MUST round-trip: absent, unknown, reused, or expired state
     // means the callback was forged or replayed — reject before trusting it.
-    if (!state || !this.oauthState.consume(state)) {
+    if (!state || !(await this.oauthState.consume(state))) {
       this.logger.warn('Google OAuth callback rejected: invalid or missing state');
       return res.redirect(
         `${frontendUrl}/login?error=${encodeURIComponent('Invalid or expired OAuth state. Please try signing in again.')}`,
@@ -220,7 +249,7 @@ export class AuthController implements OnModuleDestroy {
   // Apple OAuth
   // ──────────────────────────────────────────
   @Get('apple')
-  appleAuth(@Req() req: any, @Res() res: Response) {
+  async appleAuth(@Req() req: any, @Res() res: Response) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     try {
       if (!this.appleAuthService.isConfigured()) {
@@ -230,7 +259,7 @@ export class AuthController implements OnModuleDestroy {
       }
       // CSRF protection: per-request one-time state — Apple returns it in the
       // POST body of the callback, where it is validated and burned.
-      const state = this.oauthState.issue();
+      const state = await this.oauthState.issue();
       return res.redirect(this.appleAuthService.getAuthorizationUrl(state));
     } catch (err: any) {
       return res.redirect(
@@ -255,7 +284,7 @@ export class AuthController implements OnModuleDestroy {
     try {
       // State is mandatory: Apple always echoes it back. Anything missing,
       // unknown, reused, or expired is a forged/replayed callback.
-      if (!body.state || !this.oauthState.consume(body.state)) {
+      if (!body.state || !(await this.oauthState.consume(body.state))) {
         this.logger.warn('Apple OAuth callback rejected: invalid or missing state');
         throw new Error('Invalid or expired OAuth state. Please try signing in again.');
       }
@@ -269,7 +298,7 @@ export class AuthController implements OnModuleDestroy {
     }
   }
 
-  private redirectOAuthResult(
+  private async redirectOAuthResult(
     res: Response,
     result?: { accessToken?: string; refreshToken?: string; user?: unknown },
   ) {
@@ -281,13 +310,14 @@ export class AuthController implements OnModuleDestroy {
       // One-time code instead of tokens in the URL — tokens no longer land in
       // browser history, logs, or Referer headers.
       const code = randomUUID();
-      this.pendingCodes.set(code, {
+      await this.oauthCodeModel.create({
+        codeHash: createHash('sha256').update(code).digest('hex'),
         result: {
           accessToken: result.accessToken,
           refreshToken: result.refreshToken || '',
           user: result.user,
         },
-        expiresAt: Date.now() + OAUTH_CODE_TTL_MS,
+        expiresAt: new Date(Date.now() + OAUTH_CODE_TTL_MS),
       });
       return res.redirect(`${frontendUrl}/auth/callback?code=${encodeURIComponent(code)}`);
     } catch {

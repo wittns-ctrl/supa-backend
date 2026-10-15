@@ -203,9 +203,8 @@ export class BookingsService {
       ? booking.restaurantId as { ownerId?: Types.ObjectId }
       : null;
     const isOwner = grantedRoles.has(roles.OWNER) && restaurant?.ownerId?.toString() === userId;
-    const customerId = typeof booking.customerId === 'object'
-      ? (booking.customerId as { _id?: Types.ObjectId })._id?.toString()
-      : booking.customerId?.toString();
+    const customerRef = booking.customerId as any;
+    const customerId = customerRef?._id?.toString?.() || customerRef?.toString?.();
     if (grantedRoles.has(roles.CUSTOMER) && !isOwner && customerId === userId && booking.hiddenForCustomer) {
       throw new NotFoundException('Booking not found');
     }

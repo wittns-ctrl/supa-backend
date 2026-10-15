@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsIn, MinLength, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEmail, IsIn, Matches, MinLength, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ValidateNested } from 'class-validator';
 

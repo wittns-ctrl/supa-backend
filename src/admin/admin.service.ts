@@ -54,7 +54,11 @@ export class AdminService {
       this.restaurantModel.countDocuments({ status: RestaurantStatus.PENDING }),
       this.userModel.countDocuments(),
       this.userModel.countDocuments({ role: roles.CUSTOMER }),
-      this.userModel.countDocuments({ role: roles.OWNER }),
+      this.userModel.countDocuments({
+        restaurantMemberships: {
+          $elemMatch: { role: 'owner', status: 'active' },
+        },
+      }),
       this.orderModel.countDocuments(),
       this.bookingsModel.countDocuments(),
       this.orderModel.countDocuments({ status: OrderStatus.PENDING }),
