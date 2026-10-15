@@ -22,7 +22,6 @@ import { ForgotAuthDto } from './dto/Forgot.dto';
 import { resetAuthDto } from './dto/reset-auth.dto';
 import { LogoutAuthDto } from './dto/Logout.dto';
 import { AuthGuard } from '@nestjs/passport';
-import { RefreshAuthDto } from './dto/refresh-auth.dto';
 import type { Response } from 'express';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { Throttle } from '@nestjs/throttler';
@@ -31,6 +30,7 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { randomUUID } from 'crypto';
 import passport from 'passport';
 import { OAuthStateService } from './oauth-state.service';
+import { isProductionEnv } from 'src/config/env.validation';
 
 // Short-lived one-time codes for the OAuth code exchange flow. Tokens are
 // never placed in the redirect URL — the frontend swaps a code for tokens.
@@ -69,6 +69,27 @@ export class AuthController implements OnModuleDestroy {
     clearInterval(this.codePurgeTimer);
   }
 
+  private readCookie(req: any, name: string): string | undefined {
+    const header = String(req?.headers?.cookie || '');
+    const value = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+    if (!value) return undefined;
+    try { return decodeURIComponent(value.slice(name.length + 1)); } catch { return undefined; }
+  }
+
+  private authResponse(res: Response, result: any) {
+    if (result?.refreshToken) {
+      res.cookie('supa_refresh', result.refreshToken, {
+        httpOnly: true,
+        secure: isProductionEnv(),
+        sameSite: 'lax',
+        path: '/auth',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+    }
+    const { refreshToken: _refreshToken, ...body } = result || {};
+    return body;
+  }
+
   @Post('signup')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   signup(@Body() signupdto: CreateAuthDto) {
@@ -77,8 +98,8 @@ export class AuthController implements OnModuleDestroy {
 
   @Post('verifyOtp')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  verifyOtp(@Body() verifydto: emailverificationDto) {
-    return this.authService.verifyOtp(verifydto);
+  async verifyOtp(@Body() verifydto: emailverificationDto, @Res({ passthrough: true }) res: Response) {
+    return this.authResponse(res, await this.authService.verifyOtp(verifydto));
   }
 
   @Post('resend-otp')
@@ -89,14 +110,8 @@ export class AuthController implements OnModuleDestroy {
 
   @Post('login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  Login(@Body() Logindto: loginAuthDto) {
-    return this.authService.signin(Logindto);
-  }
-
-  @Post('check-customer-account')
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  checkCustomerAccount(@Body() body: ForgotAuthDto) {
-    return this.authService.checkCustomerAccount(body.email);
+  async Login(@Body() Logindto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
+    return this.authResponse(res, await this.authService.signin(Logindto));
   }
 
   @Post('forgot')
@@ -114,16 +129,19 @@ export class AuthController implements OnModuleDestroy {
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   logout(
-    @Body() logoutdto: LogoutAuthDto,
-    @CurrentUser() user: { id: string; email: string; role: string },
+    @Res({ passthrough: true }) res: Response,
+    @CurrentUser() user: { id: string; email: string; role: string; sessionId: string },
   ) {
-    return this.authService.Logout(logoutdto, user);
+    res.clearCookie('supa_refresh', { httpOnly: true, secure: isProductionEnv(), sameSite: 'lax', path: '/auth' });
+    return this.authService.Logout({}, user);
   }
 
   @Post('refresh')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  refresh(@Body() dto: RefreshAuthDto) {
-    return this.authService.refreshAccessToken(dto.refreshToken);
+  async refresh(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+    const refreshToken = this.readCookie(req, 'supa_refresh');
+    if (!refreshToken) throw new UnauthorizedException('Refresh session is missing');
+    return this.authResponse(res, await this.authService.refreshAccessToken(refreshToken));
   }
 
   // ──────────────────────────────────────────
@@ -131,7 +149,7 @@ export class AuthController implements OnModuleDestroy {
   // ──────────────────────────────────────────
   @Post('oauth/exchange')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  exchangeCode(@Body() body: { code: string }) {
+  exchangeCode(@Body() body: { code: string }, @Res({ passthrough: true }) res: Response) {
     if (!body?.code) throw new BadRequestException('code is required');
     const entry = this.pendingCodes.get(body.code);
     if (!entry) {
@@ -142,7 +160,7 @@ export class AuthController implements OnModuleDestroy {
     if (entry.expiresAt < Date.now()) {
       throw new UnauthorizedException('Invalid or expired OAuth code');
     }
-    return entry.result;
+    return this.authResponse(res, entry.result);
   }
 
   // ──────────────────────────────────────────

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   UnauthorizedException,
   BadRequestException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
@@ -13,7 +14,7 @@ import {
   RestaurantStatus,
 } from './schema/restaurant.schema';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument, roles } from 'src/users/schema/user.schema';
+import { RestaurantMembershipStatus, User, UserDocument, roles } from 'src/users/schema/user.schema';
 
 /**
  * Escapes user input before interpolation into $regex — prevents ReDoS and
@@ -27,7 +28,7 @@ import { bookings, bookingsDocument } from 'src/bookings/schema/bookings.schema'
 import { menu, menuDocument } from 'src/menus/schema/menu.schema';
 
 @Injectable()
-export class RestaurantsService {
+export class RestaurantsService implements OnModuleInit {
   constructor(
     @InjectModel(restaurant.name)
     private readonly restaurantModel: Model<restaurantDocument>,
@@ -41,6 +42,32 @@ export class RestaurantsService {
     private readonly menuModel: Model<menuDocument>,
   ) {}
 
+  async onModuleInit() {
+    // One-time, idempotent migration for accounts that predate restaurant
+    // memberships. Their business access follows the status of each listing.
+    const legacyOwners = await this.userModel.find({ role: roles.OWNER });
+    for (const user of legacyOwners) {
+      const ownedRestaurants = await this.restaurantModel.find({ ownerId: user._id });
+      const memberships = (user.restaurantMemberships || []) as any[];
+      for (const restaurant of ownedRestaurants) {
+        const restaurantId = restaurant._id.toString();
+        if (memberships.some((entry) => entry.restaurantId?.toString() === restaurantId)) continue;
+        let status = RestaurantMembershipStatus.PENDING;
+        if (restaurant.status === RestaurantStatus.ACTIVE && restaurant.isApproved) {
+          status = RestaurantMembershipStatus.ACTIVE;
+        } else if (restaurant.status === RestaurantStatus.REJECTED) {
+          status = RestaurantMembershipStatus.REJECTED;
+        } else if (restaurant.status === RestaurantStatus.SUSPENDED) {
+          status = RestaurantMembershipStatus.SUSPENDED;
+        }
+        memberships.push({ restaurantId: restaurant._id, role: 'owner', status });
+      }
+      user.restaurantMemberships = memberships as any;
+      user.role = roles.CUSTOMER;
+      await user.save();
+    }
+  }
+
   async createRestaurant(createRestdto: CreateRestaurantDto) {
     const user = await this.userModel.findById(createRestdto.ownerId);
 
@@ -48,8 +75,8 @@ export class RestaurantsService {
       throw new NotFoundException('user not found');
     }
 
-    if (user.role !== 'owner') {
-      throw new UnauthorizedException('You are not authorized for this action');
+    if (user.role === roles.ADMIN) {
+      throw new UnauthorizedException('Restaurant owner account is invalid');
     }
 
     const created = await this.restaurantModel.create({
@@ -64,10 +91,8 @@ export class RestaurantsService {
       cuisine: createRestdto.cuisine || 'International',
       amenities: createRestdto.amenities || [],
       verificationDocs: createRestdto.verificationDocs || [],
-      // Newly registered restaurants should be visible on public restaurant
-      // pages and available for ordering as soon as registration succeeds.
-      isApproved: true,
-      status: RestaurantStatus.ACTIVE,
+      isApproved: false,
+      status: RestaurantStatus.PENDING,
     });
 
     return this.formatRestaurant(created);
@@ -85,33 +110,28 @@ export class RestaurantsService {
       );
     }
 
-    const previousRole = user.role;
-    if (previousRole === roles.CUSTOMER) {
-      user.role = roles.OWNER;
-      await user.save();
-    }
-
-    try {
-      const restaurant = await this.createRestaurant({
-        ...createRestdto,
-        ownerId: user._id.toString(),
-      });
-      return {
-        ...restaurant,
-        ownerAccount: {
-          id: user._id.toString(),
-          name: user.name,
-          email: user.email,
-          role: roles.OWNER,
-        },
-      };
-    } catch (error) {
-      if (previousRole === roles.CUSTOMER) {
-        user.role = roles.CUSTOMER;
-        await user.save();
-      }
-      throw error;
-    }
+    const restaurant = await this.createRestaurant({
+      ...createRestdto,
+      ownerId: user._id.toString(),
+    });
+    user.restaurantMemberships = user.restaurantMemberships || [];
+    user.restaurantMemberships.push({
+      restaurantId: new Types.ObjectId(restaurant.id),
+      role: 'owner',
+      status: RestaurantMembershipStatus.PENDING,
+    } as any);
+    await user.save();
+    return {
+      ...restaurant,
+      ownerAccount: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        role: roles.CUSTOMER,
+        roles: [roles.CUSTOMER],
+      },
+      applicationStatus: RestaurantMembershipStatus.PENDING,
+    };
   }
 
   async findAll(query: {
@@ -241,6 +261,25 @@ export class RestaurantsService {
       new: true,
     });
     if (!updated) throw new NotFoundException('Restaurant not found');
+    const owner = await this.userModel.findById(updated.ownerId);
+    if (owner) {
+      const membership: any = (owner.restaurantMemberships || []).find(
+        (entry: any) => entry.restaurantId?.toString() === id,
+      );
+      if (membership) {
+        membership.status = approved
+          ? RestaurantMembershipStatus.ACTIVE
+          : RestaurantMembershipStatus.REJECTED;
+      } else if (approved) {
+        owner.restaurantMemberships = owner.restaurantMemberships || [];
+        owner.restaurantMemberships.push({
+          restaurantId: new Types.ObjectId(id),
+          role: 'owner',
+          status: RestaurantMembershipStatus.ACTIVE,
+        } as any);
+      }
+      await owner.save();
+    }
     return this.formatRestaurant(updated);
   }
 
@@ -253,6 +292,20 @@ export class RestaurantsService {
       new: true,
     });
     if (!updated) throw new NotFoundException('Restaurant not found');
+    const owner = await this.userModel.findById(updated.ownerId);
+    const membership: any = owner?.restaurantMemberships?.find(
+      (entry: any) => entry.restaurantId?.toString() === id,
+    );
+    if (owner && membership) {
+      membership.status = status === RestaurantStatus.ACTIVE
+        ? RestaurantMembershipStatus.ACTIVE
+        : status === RestaurantStatus.REJECTED
+          ? RestaurantMembershipStatus.REJECTED
+          : status === RestaurantStatus.SUSPENDED
+            ? RestaurantMembershipStatus.SUSPENDED
+            : RestaurantMembershipStatus.PENDING;
+      await owner.save();
+    }
     return this.formatRestaurant(updated);
   }
 

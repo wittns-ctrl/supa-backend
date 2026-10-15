@@ -19,6 +19,7 @@ import { Roles } from 'src/common/decorators/roles.decorator';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { roles } from 'src/users/schema/user.schema';
 import { parsePagination } from 'src/common/utils/pagination.util';
+import { userHasRole } from 'src/common/utils/auth-access.util';
 
 @Controller('bookings')
 @UseGuards(JwtAuthGuard)
@@ -42,6 +43,7 @@ export class BookingsController {
     @Query('restaurantId') restaurantId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('view') view?: string,
     @CurrentUser() user?: { id: string; role: string },
   ) {
     const role = user?.role;
@@ -50,16 +52,16 @@ export class BookingsController {
     if (role === roles.ADMIN) {
       return this.bookingsService.findAll(customerId, restaurantId, user!.id, role, p, l);
     }
-    if (role === roles.OWNER) {
+    if (view === 'owner' && userHasRole(user, roles.OWNER)) {
       // Owner scoping is enforced in the service (must own the restaurant).
-      return this.bookingsService.findAll(customerId, restaurantId, user!.id, role, p, l);
+      return this.bookingsService.findAll(customerId, restaurantId, user!.id, roles.OWNER, p, l);
     }
     return this.bookingsService.findAll(undefined, undefined, user!.id, role, p, l);
   }
 
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.bookingsService.findOne(id, user.id, user.role);
+    return this.bookingsService.findOne(id, user.id, (user as any).roles?.join(',') || user.role);
   }
 
   @Patch(':id')
@@ -70,12 +72,12 @@ export class BookingsController {
     @Body() updateBookingDto: UpdateBookingDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.bookingsService.update(id, updateBookingDto, user.id, user.role);
+    return this.bookingsService.update(id, updateBookingDto, user.id, (user as any).roles?.join(',') || user.role);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.bookingsService.remove(id, user.id, user.role);
+    return this.bookingsService.remove(id, user.id, (user as any).roles?.join(',') || user.role);
   }
 
   @Delete(':id/history')

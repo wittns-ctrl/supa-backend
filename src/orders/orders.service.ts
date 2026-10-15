@@ -288,9 +288,7 @@ export class OrdersService {
       .populate('restaurantId', 'name ownerId')
       .populate('customerId', 'name email phone');
     if (!found) throw new NotFoundException('Order not found');
-    if (userRole === roles.CUSTOMER && found.hiddenForCustomer) {
-      throw new NotFoundException('Order not found');
-    }
+    const grantedRoles = new Set((userRole || '').split(','));
 
     const ownerId =
       typeof found.restaurantId === 'object'
@@ -301,11 +299,14 @@ export class OrdersService {
         ? (found.customerId as { _id?: Types.ObjectId })._id?.toString()
         : String(found.customerId);
 
-    if (userRole === roles.OWNER && (!userId || ownerId !== userId)) {
-      throw new UnauthorizedException('You are not authorized to view this order');
-    } else if (userRole === roles.CUSTOMER && (!userId || customerId !== userId)) {
-      throw new UnauthorizedException('You are not authorized to view this order');
-    } else if (userRole !== roles.ADMIN && userRole !== roles.OWNER && userRole !== roles.CUSTOMER) {
+    const isOwner = grantedRoles.has(roles.OWNER) && !!userId && ownerId === userId;
+    const isCustomer = grantedRoles.has(roles.CUSTOMER) && !!userId && customerId === userId;
+    if (isCustomer && !isOwner && found.hiddenForCustomer) {
+      throw new NotFoundException('Order not found');
+    }
+    if (grantedRoles.has(roles.ADMIN)) {
+      // Admin access is handled separately from either account membership.
+    } else if (!isOwner && !isCustomer) {
       throw new UnauthorizedException('You are not authorized to view this order');
     }
 
@@ -352,12 +353,21 @@ export class OrdersService {
         ? (populated.restaurantId as { ownerId?: Types.ObjectId }).ownerId?.toString()
         : undefined;
 
-    if (userRole !== roles.ADMIN) {
-      if (userRole === roles.CUSTOMER) {
-        const customerId =
-          typeof populated.customerId === 'object'
-            ? (populated.customerId as { _id?: Types.ObjectId })._id?.toString()
-            : String(populated.customerId);
+    const grantedRoles = new Set((userRole || '').split(','));
+    if (!grantedRoles.has(roles.ADMIN)) {
+      const customerId =
+        typeof populated.customerId === 'object'
+          ? (populated.customerId as { _id?: Types.ObjectId })._id?.toString()
+          : String(populated.customerId);
+      const isOwner = grantedRoles.has(roles.OWNER) && !!userId && ownerId === userId;
+      const isCustomer = grantedRoles.has(roles.CUSTOMER) && !!userId && customerId === userId;
+      if (isOwner) {
+        if (!OWNER_ALLOWED.has(status)) {
+          throw new BadRequestException(
+            `Restaurants cannot set order status to "${status}"`,
+          );
+        }
+      } else if (isCustomer) {
         const allowedSelfCancel =
           status === OrderStatus.CANCELLED &&
           (populated.status === OrderStatus.PENDING ||
@@ -365,17 +375,6 @@ export class OrdersService {
         if (!allowedSelfCancel || customerId !== userId) {
           throw new UnauthorizedException(
             'You are not authorized to update this order',
-          );
-        }
-      } else if (userRole === roles.OWNER) {
-        if (!userId || ownerId !== userId) {
-          throw new UnauthorizedException(
-            'You are not authorized to update this order',
-          );
-        }
-        if (!OWNER_ALLOWED.has(status)) {
-          throw new BadRequestException(
-            `Restaurants cannot set order status to "${status}"`,
           );
         }
       } else {

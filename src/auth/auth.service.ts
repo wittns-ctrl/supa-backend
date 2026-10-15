@@ -18,7 +18,7 @@ import { randomInt, randomUUID, createHash, timingSafeEqual } from 'crypto';
 import { MailService } from 'src/mail/mail.service';
 import { emailverificationDto } from './dto/emailVerification.dto';
 import { LogoutAuthDto } from './dto/Logout.dto';
-import { mapFrontendRole, sanitizeUser } from 'src/common/utils/user-response.util';
+import { sanitizeUser } from 'src/common/utils/user-response.util';
 
 const OTP_MAX_ATTEMPTS = 5;
 
@@ -26,6 +26,22 @@ const OTP_MAX_ATTEMPTS = 5;
 // two tabs (or a lost response) refreshing concurrently don't revoke each
 // other. Short window — long enough for races, useless for stolen tokens.
 const REFRESH_GRACE_MS = 30_000;
+const REFRESH_DEFAULT_MS = 7 * 24 * 60 * 60 * 1000;
+
+function durationMs(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const match = /^(\d+)(ms|s|m|h|d)$/.exec(value);
+  if (!match) return fallback;
+  const amount = Number(match[1]);
+  const units: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return amount * units[match[2]];
+}
+
+function validateBcryptPassword(password: string) {
+  if (Buffer.byteLength(password, 'utf8') > 72) {
+    throw new BadRequestException('Password cannot exceed 72 UTF-8 bytes');
+  }
+}
 
 function hashToken(token: string): string {
   // SHA-256 is sufficient for high-entropy tokens (OTP digits / UUIDs) and is
@@ -71,12 +87,14 @@ export class AuthService {
 
     if (existingUser) {
       if (existingUser.isVerified) {
-        throw new BadRequestException('User already exists');
+        return { message: 'If this email can be registered, a verification code has been sent.' };
       }
       const salt = await bcrypt.genSalt(10);
+      validateBcryptPassword(signupdto.password);
       existingUser.password = await bcrypt.hash(signupdto.password, salt);
       existingUser.name = signupdto.name || existingUser.name;
       existingUser.phone = signupdto.phone ?? existingUser.phone;
+      existingUser.role = roles.CUSTOMER;
 
       const otp = randomInt(100000, 999999).toString();
       const expires = new Date();
@@ -88,7 +106,7 @@ export class AuthService {
       await existingUser.save();
 
       await this.mailservice.sendOtpEmail(normalizedEmail, otp);
-      return { message: 'open your email to check for the verification email' };
+      return { message: 'If this email can be registered, a verification code has been sent.' };
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -101,13 +119,9 @@ export class AuthService {
     const expires = new Date();
     expires.setMinutes(expires.getMinutes() + 5);
 
-    const role = mapFrontendRole(signupdto.role) as roles;
-    if (role === roles.ADMIN) {
-      throw new BadRequestException(
-        'Admin role must be assigned by a system administrator',
-      );
-    }
-    const autoVerify = role === roles.OWNER;
+    validateBcryptPassword(signupdto.password);
+    const role = roles.CUSTOMER;
+    const autoVerify = false;
 
     const user = await this.userModel.create({
       name: signupdto.name,
@@ -131,14 +145,14 @@ export class AuthService {
     }
 
     await this.mailservice.sendOtpEmail(normalizedEmail, otp);
-    return { message: 'open your email to check for the verification email' };
+    return { message: 'If this email can be registered, a verification code has been sent.' };
   }
 
   async verifyOtp(VerifyDto: emailverificationDto) {
     const user = await this.findUserByEmail(VerifyDto.email);
 
     if (!user) {
-      throw new BadRequestException('user not found');
+      throw new BadRequestException('Invalid or expired verification code');
     }
 
     if (user.isVerified === true) {
@@ -194,19 +208,19 @@ export class AuthService {
       throw new UnauthorizedException('invalid email or password');
     }
 
-    if (user.status === 'blocked') {
-      throw new UnauthorizedException('Account is blocked');
+      if (user.status === 'blocked') {
+      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
     }
 
     if (!user.isVerified) {
-      throw new UnauthorizedException('Please verify your email first');
+      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
     }
 
     if (!user.password) {
-      throw new UnauthorizedException(
-        'This account uses social login. Please sign in with Google or Apple.',
-      );
+      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
     }
+
+    validateBcryptPassword(signinDto.password);
 
     const isMatch = await bcrypt.compare(signinDto.password, user.password);
 
@@ -227,11 +241,11 @@ export class AuthService {
     const user = await this.findUserByEmail(normalized);
 
     if (!user) {
-      throw new BadRequestException('No account found with this email');
+      return { message: 'If an unverified account exists, a new code has been sent.' };
     }
 
     if (user.isVerified) {
-      return { message: 'Email is already verified. You can log in.' };
+      return { message: 'If an unverified account exists, a new code has been sent.' };
     }
 
     const otp = randomInt(100000, 999999).toString();
@@ -244,7 +258,7 @@ export class AuthService {
     await user.save();
 
     await this.mailservice.sendOtpEmail(normalized, otp);
-    return { message: 'A new verification code has been sent. Check your email.' };
+    return { message: 'If an unverified account exists, a new code has been sent.' };
   }
 
   /**
@@ -296,12 +310,14 @@ export class AuthService {
   }
 
   private async generateTokens(user: UserDocument) {
+    const sessionId = randomUUID();
     const payload = {
       sub: user._id.toString(),
       email: user.email,
       role: user.role,
+      sid: sessionId,
     };
-    const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
+      const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
     const refreshTtl: any = process.env.JWT_REFRESH_TTL || '7d';
     const refreshSecret = process.env.JWT_REFRESH;
     if (!refreshSecret) {
@@ -313,12 +329,15 @@ export class AuthService {
     });
 
     const hashedrefreshtoken = hashToken(refreshtoken);
-    // Keep the current token as the grace-period fallback before overwriting
-    if (user.refreshToken) {
-      user.previousRefreshToken = user.refreshToken;
-      user.previousRefreshTokenExpiresAt = new Date(Date.now() + REFRESH_GRACE_MS);
-    }
-    user.refreshToken = hashedrefreshtoken;
+    const now = Date.now();
+    user.authSessions = (user.authSessions || []).filter((session: any) =>
+      new Date(session.expiresAt).getTime() > now,
+    ) as any;
+    user.authSessions.push({
+      sessionId,
+      refreshTokenHash: hashedrefreshtoken,
+      expiresAt: new Date(now + durationMs(String(refreshTtl), REFRESH_DEFAULT_MS)),
+    } as any);
     await user.save();
 
     const accessToken = this.jwtservice.sign(payload as any, { expiresIn: accessTtl });
@@ -355,15 +374,6 @@ export class AuthService {
     };
   }
 
-  async checkCustomerAccount(email: string) {
-    const user = await this.findUserByEmail(email);
-    const isCustomer = user?.role === roles.CUSTOMER;
-    return {
-      isCustomerAccount: Boolean(isCustomer && user?.isVerified),
-      needsVerification: Boolean(isCustomer && !user?.isVerified),
-    };
-  }
-
   async resetpassword(resetDto: resetAuthDto) {
     // Token is hashed with SHA-256 before lookup → O(1) indexed query instead
     // of scanning and bcrypt-comparing up to 50 candidate rows per request.
@@ -379,10 +389,12 @@ export class AuthService {
       throw new NotFoundException('Invalid or expired reset link');
     }
 
+    validateBcryptPassword(resetDto.newPassword);
     user.password = await bcrypt.hash(resetDto.newPassword, 12);
     user.resetToken = undefined;
     user.resetTokenExpiration = undefined;
     // A reset link is proof the old credentials are compromised — kill all sessions
+    user.authSessions = [];
     user.refreshToken = undefined;
     user.previousRefreshToken = undefined;
     user.previousRefreshTokenExpiresAt = undefined;
@@ -394,7 +406,7 @@ export class AuthService {
 
   async Logout(
     logoutDto: LogoutAuthDto,
-    caller?: { id: string; email: string; role: string },
+    caller?: { id: string; email: string; role: string; sessionId?: string },
   ) {
     let user: UserDocument | null = null;
     if (caller && caller.id) {
@@ -407,6 +419,13 @@ export class AuthService {
       throw new UnauthorizedException('user not found');
     }
 
+    if (caller?.sessionId) {
+      user.authSessions = (user.authSessions || []).filter(
+        (session: any) => session.sessionId !== caller.sessionId,
+      ) as any;
+    } else {
+      user.authSessions = [];
+    }
     user.refreshToken = undefined;
     await user.save();
 
@@ -429,7 +448,7 @@ export class AuthService {
 
     const userId = payload.sub;
     const user = await this.userModel.findById(userId);
-    if (!user || !user.refreshToken) {
+    if (!user || !payload.sid || !user.authSessions?.length) {
       throw new UnauthorizedException('Refresh token has been revoked');
     }
 
@@ -439,22 +458,27 @@ export class AuthService {
 
     // Constant-time comparison of SHA-256 hashes
     const providedHash = hashToken(refreshToken);
-    if (!safeEqualHex(providedHash, user.refreshToken)) {
+    const session: any = user.authSessions.find((entry: any) => entry.sessionId === payload.sid);
+    if (!session || new Date(session.expiresAt).getTime() <= Date.now()) {
+      throw new UnauthorizedException('Refresh token has been revoked');
+    }
+    const { iat: _iat, exp: _exp, ...claims } = payload;
+    if (!safeEqualHex(providedHash, session.refreshTokenHash)) {
       // Grace window: an in-flight rotation from another tab may still be
       // re-using the just-replaced token. Accept it once and return the
       // current tokens instead of revoking the session.
       if (
-        user.previousRefreshToken &&
-        user.previousRefreshTokenExpiresAt &&
-        user.previousRefreshTokenExpiresAt.getTime() > Date.now() &&
-        safeEqualHex(providedHash, user.previousRefreshToken)
+        session.previousRefreshTokenHash &&
+        session.previousRefreshTokenExpiresAt &&
+        new Date(session.previousRefreshTokenExpiresAt).getTime() > Date.now() &&
+        safeEqualHex(providedHash, session.previousRefreshTokenHash)
       ) {
         this.logger.debug(
           `Refresh grace period used for user ${user._id} — concurrent refresh absorbed`,
        );
         const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
         return {
-          accessToken: this.jwtservice.sign(payload as any, {
+          accessToken: this.jwtservice.sign(claims as any, {
             expiresIn: accessTtl,
           }),
           refreshToken, // echo the still-graceful token back
@@ -462,23 +486,28 @@ export class AuthService {
         };
       }
 
-      user.refreshToken = undefined;
-      user.previousRefreshToken = undefined;
-      user.previousRefreshTokenExpiresAt = undefined;
+      user.authSessions = (user.authSessions || []).filter(
+        (entry: any) => entry.sessionId !== payload.sid,
+      ) as any;
       await user.save().catch(() => undefined);
       throw new UnauthorizedException(
         'Reuse detected — please re-login with your credentials',
       );
     }
 
-    // Successful rotation: clear the stale grace token
-    user.previousRefreshToken = undefined;
-    user.previousRefreshTokenExpiresAt = undefined;
+    session.previousRefreshTokenHash = session.refreshTokenHash;
+    session.previousRefreshTokenExpiresAt = new Date(Date.now() + REFRESH_GRACE_MS);
+    const nextRefreshToken = this.jwtservice.sign(claims as any, {
+      secret: process.env.JWT_REFRESH,
+      expiresIn: process.env.JWT_REFRESH_TTL || '7d',
+    });
+    session.refreshTokenHash = hashToken(nextRefreshToken);
     await user.save();
-
-    const tokens = await this.generateTokens(user);
+    const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
+    const accessToken = this.jwtservice.sign(claims as any, { expiresIn: accessTtl });
     return {
-      ...tokens,
+      accessToken,
+      refreshToken: nextRefreshToken,
       user: sanitizeUser(user),
     };
   }

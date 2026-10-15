@@ -120,12 +120,16 @@ export class UsersService {
 
     const match = await bcrypt.compare(dto.currentPassword, user.password);
     if (!match) throw new UnauthorizedException('Current password is incorrect');
+    if (Buffer.byteLength(dto.newPassword, 'utf8') > 72) {
+      throw new BadRequestException('Password cannot exceed 72 UTF-8 bytes');
+    }
 
     user.password = await bcrypt.hash(dto.newPassword, 12);
     // Invalidate all existing sessions — old refresh tokens must not survive a credential change
     user.refreshToken = undefined;
     user.previousRefreshToken = undefined;
     user.previousRefreshTokenExpiresAt = undefined;
+    user.authSessions = [];
     await user.save();
     return { message: 'Password updated successfully' };
   }

@@ -198,7 +198,15 @@ export class BookingsService {
       .populate('customerId', 'name email phone');
     if (!booking) throw new NotFoundException('Booking not found');
 
-    if (userRole === roles.CUSTOMER && booking.hiddenForCustomer) {
+    const grantedRoles = new Set((userRole || '').split(','));
+    const restaurant = booking.restaurantId && typeof booking.restaurantId === 'object'
+      ? booking.restaurantId as { ownerId?: Types.ObjectId }
+      : null;
+    const isOwner = grantedRoles.has(roles.OWNER) && restaurant?.ownerId?.toString() === userId;
+    const customerId = typeof booking.customerId === 'object'
+      ? (booking.customerId as { _id?: Types.ObjectId })._id?.toString()
+      : booking.customerId?.toString();
+    if (grantedRoles.has(roles.CUSTOMER) && !isOwner && customerId === userId && booking.hiddenForCustomer) {
       throw new NotFoundException('Booking not found');
     }
 
@@ -215,7 +223,10 @@ export class BookingsService {
 
     await this.assertCanAccessBookingId(existing, userId, userRole);
 
-    if (updateBookingDto.status && userRole === roles.CUSTOMER) {
+    const grantedRoles = new Set((userRole || '').split(','));
+    const existingRestaurant = await this.restaurantModel.findById(existing.restaurantId);
+    const isOwner = grantedRoles.has(roles.OWNER) && existingRestaurant?.ownerId?.toString() === userId;
+    if (updateBookingDto.status && grantedRoles.has(roles.CUSTOMER) && !isOwner) {
       if (updateBookingDto.status !== reviewsEnums.CANCELLED) {
         throw new UnauthorizedException('Customers can only cancel bookings');
       }
@@ -344,9 +355,10 @@ export class BookingsService {
     const restaurant = await this.restaurantModel.findById(booking.restaurantId);
     const ownerId = restaurant?.ownerId?.toString();
 
-    const isCustomer = userRole === roles.CUSTOMER && customerId === userId;
-    const isOwner = userRole === roles.OWNER && ownerId === userId;
-    const isAdmin = userRole === roles.ADMIN;
+    const grantedRoles = new Set((userRole || '').split(','));
+    const isCustomer = grantedRoles.has(roles.CUSTOMER) && customerId === userId;
+    const isOwner = grantedRoles.has(roles.OWNER) && ownerId === userId;
+    const isAdmin = grantedRoles.has(roles.ADMIN);
     if (!isCustomer && !isOwner && !isAdmin) {
       throw new UnauthorizedException('You are not authorized to cancel this booking');
     }
@@ -388,9 +400,10 @@ export class BookingsService {
       const r = await this.restaurantModel.findById(b.restaurantId);
       ownerId = r?.ownerId?.toString();
     }
-    if (userRole === roles.ADMIN) return;
-    if (userRole === roles.OWNER && ownerId === userId) return;
-    if (userRole === roles.CUSTOMER && customerId === userId) return;
+    const grantedRoles = new Set((userRole || '').split(','));
+    if (grantedRoles.has(roles.ADMIN)) return;
+    if (grantedRoles.has(roles.OWNER) && ownerId === userId) return;
+    if (grantedRoles.has(roles.CUSTOMER) && customerId === userId) return;
     throw new UnauthorizedException('You are not authorized to access this booking');
   }
 
@@ -398,9 +411,10 @@ export class BookingsService {
     const customerId = b.customerId?.toString();
     const restaurant = b.restaurantId ? await this.restaurantModel.findById(b.restaurantId) : null;
     const ownerId = restaurant?.ownerId?.toString();
-    if (userRole === roles.ADMIN) return;
-    if (userRole === roles.OWNER && ownerId === userId) return;
-    if (userRole === roles.CUSTOMER && customerId === userId) return;
+    const grantedRoles = new Set((userRole || '').split(','));
+    if (grantedRoles.has(roles.ADMIN)) return;
+    if (grantedRoles.has(roles.OWNER) && ownerId === userId) return;
+    if (grantedRoles.has(roles.CUSTOMER) && customerId === userId) return;
     throw new UnauthorizedException('You are not authorized to modify this booking');
   }
 

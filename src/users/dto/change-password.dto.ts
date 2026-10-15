@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, MinLength, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, MinLength, MaxLength } from 'class-validator';
 
 export class ChangePasswordDto {
   @IsString()
@@ -7,9 +7,7 @@ export class ChangePasswordDto {
 
   @IsString()
   @IsNotEmpty()
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
-  @Matches(/(?=.*[A-Z])(?=.*\d)/, {
-    message: 'Password must contain at least one uppercase letter and one digit',
-  })
+  @MinLength(15, { message: 'Password must be at least 15 characters long' })
+  @MaxLength(72, { message: 'Password cannot exceed 72 characters' })
   newPassword!: string;
 }

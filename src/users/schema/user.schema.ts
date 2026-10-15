@@ -14,6 +14,43 @@ export enum UserStatus {
   BLOCKED = 'blocked',
 }
 
+export enum RestaurantMembershipStatus {
+  PENDING = 'pending',
+  ACTIVE = 'active',
+  REJECTED = 'rejected',
+  SUSPENDED = 'suspended',
+}
+
+@Schema({ _id: false })
+export class RestaurantMembership {
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'restaurant', required: true })
+  restaurantId!: Types.ObjectId;
+
+  @Prop({ type: String, enum: ['owner'], default: 'owner', required: true })
+  role!: string;
+
+  @Prop({ type: String, enum: Object.values(RestaurantMembershipStatus), default: RestaurantMembershipStatus.PENDING })
+  status!: RestaurantMembershipStatus;
+}
+
+@Schema({ _id: false })
+export class AuthSession {
+  @Prop({ required: true })
+  sessionId!: string;
+
+  @Prop({ required: true })
+  refreshTokenHash!: string;
+
+  @Prop()
+  previousRefreshTokenHash?: string;
+
+  @Prop()
+  previousRefreshTokenExpiresAt?: Date;
+
+  @Prop({ required: true })
+  expiresAt!: Date;
+}
+
 @Schema()
 export class Profile {
   @Prop()
@@ -53,6 +90,10 @@ export class User {
   isVerified!: boolean;
   @Prop({ type: String, enum: Object.values(UserStatus), default: UserStatus.ACTIVE, index: true })
   status!: UserStatus;
+  @Prop({ type: [RestaurantMembership], default: [] })
+  restaurantMemberships!: RestaurantMembership[];
+  @Prop({ type: [AuthSession], default: [] })
+  authSessions!: AuthSession[];
   @Prop()
   refreshToken?: string;
   // #25: the previously-rotated-out refresh token, honored for a short grace

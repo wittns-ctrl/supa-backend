@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsIn, MinLength, MaxLength, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEmail, IsIn, MinLength, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ValidateNested } from 'class-validator';
 
@@ -28,10 +28,8 @@ export class CreateAuthDto {
 
   @IsString()
   @IsNotEmpty()
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
-  @Matches(/(?=.*[A-Z])(?=.*\d)/, {
-    message: 'Password must contain at least one uppercase letter and one digit',
-  })
+  @MinLength(15, { message: 'Password must be at least 15 characters long' })
+  @MaxLength(72, { message: 'Password cannot exceed 72 characters' })
   password!: string;
 
   @IsOptional()
@@ -41,12 +39,12 @@ export class CreateAuthDto {
   })
   phone?: string;
 
+  // Public registration can request only customer access. Owner membership is
+  // granted by the authenticated restaurant onboarding and admin approval flow.
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  @IsIn(['customer', 'owner', 'restaurant_owner'], {
-    message: 'role must be one of: customer, owner, restaurant_owner',
-  })
-  role!: string;
+  @IsIn(['customer'], { message: 'Public signup only supports customer accounts' })
+  role?: string;
 
   @IsOptional()
   @ValidateNested()

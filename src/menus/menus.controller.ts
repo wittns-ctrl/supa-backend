@@ -17,6 +17,7 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { roles } from 'src/users/schema/user.schema';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
+import { effectiveRestaurantRole } from 'src/common/utils/auth-access.util';
 
 @Controller('menus')
 export class MenusController {
@@ -29,7 +30,7 @@ export class MenusController {
     @Body() createMenuDto: CreateMenuDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.menusService.create(createMenuDto, user.id, user.role);
+    return this.menusService.create(createMenuDto, user.id, effectiveRestaurantRole(user));
   }
 
   @Get()
@@ -50,7 +51,7 @@ export class MenusController {
     @Body() updateMenuDto: UpdateMenuDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.menusService.update(id, updateMenuDto, user.id, user.role);
+    return this.menusService.update(id, updateMenuDto, user.id, effectiveRestaurantRole(user));
   }
 
   @Delete(':id')
@@ -60,6 +61,6 @@ export class MenusController {
     @Param('id') id: string,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.menusService.remove(id, user.id, user.role);
+    return this.menusService.remove(id, user.id, effectiveRestaurantRole(user));
   }
 }

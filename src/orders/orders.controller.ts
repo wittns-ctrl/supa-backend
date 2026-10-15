@@ -19,6 +19,7 @@ import { roles } from 'src/users/schema/user.schema';
 import { OrderStatus } from './schema/order.schema';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { parsePagination } from 'src/common/utils/pagination.util';
+import { userHasRole } from 'src/common/utils/auth-access.util';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard)
@@ -36,6 +37,7 @@ export class OrdersController {
     @Query('restaurantId') restaurantId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('view') view?: string,
     @CurrentUser() user?: { id: string; role: string },
   ) {
     const role = user?.role;
@@ -44,9 +46,9 @@ export class OrdersController {
     if (role === roles.ADMIN) {
       return this.ordersService.findAll(customerId, restaurantId, user!.id, role, p, l);
     }
-    if (role === roles.OWNER) {
+    if (view === 'owner' && userHasRole(user, roles.OWNER)) {
       // Owners are scoped to their own restaurants inside the service.
-      return this.ordersService.findAll(customerId, restaurantId, user!.id, role, p, l);
+      return this.ordersService.findAll(customerId, restaurantId, user!.id, roles.OWNER, p, l);
     }
     // Customers are always scoped to their own orders — query params ignored.
     return this.ordersService.findAll(undefined, undefined, user!.id, role, p, l);
@@ -54,7 +56,7 @@ export class OrdersController {
 
   @Get(':id/tracking')
   getTracking(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.ordersService.getTracking(id, user.id, user.role);
+    return this.ordersService.getTracking(id, user.id, (user as any).roles?.join(',') || user.role);
   }
 
   @Post(':id/reorder')
@@ -77,7 +79,7 @@ export class OrdersController {
 
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.ordersService.findOne(id, user.id, user.role);
+    return this.ordersService.findOne(id, user.id, (user as any).roles?.join(',') || user.role);
   }
 
   @Patch(':id/status')
@@ -88,6 +90,6 @@ export class OrdersController {
     @Body() body: { status: OrderStatus },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.ordersService.updateStatus(id, body.status, user.id, user.role);
+    return this.ordersService.updateStatus(id, body.status, user.id, (user as any).roles?.join(',') || user.role);
   }
 }

@@ -25,19 +25,36 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; email: string; role: string }) {
+  async validate(payload: { sub: string; email: string; role: string; sid: string }) {
     const user = await this.userModel
       .findById(payload.sub)
-      .select('-password -refreshToken');
+      .select('-password -refreshToken -authSessions.refreshTokenHash -authSessions.previousRefreshTokenHash');
     if (!user) throw new UnauthorizedException('User not found');
     if (user.status === UserStatus.BLOCKED) {
       throw new UnauthorizedException('Account is blocked');
+    }
+    const session: any = user.authSessions?.find(
+      (entry: any) => entry.sessionId === payload.sid,
+    );
+    if (!session || new Date(session.expiresAt).getTime() <= Date.now()) {
+      throw new UnauthorizedException('Session has been revoked');
+    }
+    const roles = new Set<string>([user.role]);
+    for (const membership of user.restaurantMemberships || []) {
+      if (membership.status === 'active') roles.add(membership.role);
     }
     return {
       id: user._id.toString(),
       email: user.email,
       role: user.role,
+      roles: [...roles],
+      restaurantMemberships: (user.restaurantMemberships || []).map((membership: any) => ({
+        restaurantId: membership.restaurantId?.toString?.() || membership.restaurantId,
+        role: membership.role,
+        status: membership.status,
+      })),
       name: user.name,
+      sessionId: payload.sid,
     };
   }
 }

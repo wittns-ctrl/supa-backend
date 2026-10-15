@@ -21,6 +21,7 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { RestaurantStatus } from './schema/restaurant.schema';
 import { SetRestaurantStatusDto, ApproveRestaurantDto } from './dto/set-status.dto';
 import { AddImagesDto } from './dto/add-images.dto';
+import { effectiveRestaurantRole, userHasRole } from 'src/common/utils/auth-access.util';
 
 @Controller('restaurants')
 export class RestaurantsController {
@@ -32,7 +33,7 @@ export class RestaurantsController {
     @Body() createRestaurantDto: CreateRestaurantDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    if (user.role === roles.CUSTOMER || user.role === roles.OWNER) {
+    if (user.role === roles.CUSTOMER || userHasRole(user, roles.OWNER)) {
       return this.restaurantsService.createRestaurantForAccount(
         createRestaurantDto,
         user.id,
@@ -79,7 +80,7 @@ export class RestaurantsController {
     @Param('id') id: string,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.restaurantsService.getAnalyticsOverview(id, user.id, user.role);
+    return this.restaurantsService.getAnalyticsOverview(id, user.id, effectiveRestaurantRole(user));
   }
 
   @Get(':id/analytics/revenue')
@@ -90,7 +91,7 @@ export class RestaurantsController {
     @Query('period') period?: string,
     @CurrentUser() user?: { id: string; role: string },
   ) {
-    return this.restaurantsService.getRevenueChart(id, period, user?.id, user?.role);
+    return this.restaurantsService.getRevenueChart(id, period, user?.id, effectiveRestaurantRole(user));
   }
 
   @Get(':id/analytics/peak-hours')
@@ -100,7 +101,7 @@ export class RestaurantsController {
     @Param('id') id: string,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.restaurantsService.getPeakHours(id, user.id, user.role);
+    return this.restaurantsService.getPeakHours(id, user.id, effectiveRestaurantRole(user));
   }
 
   @Get(':id')
@@ -133,7 +134,7 @@ export class RestaurantsController {
     @Body() body: AddImagesDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.restaurantsService.addImages(id, body.images, user.id, user.role);
+    return this.restaurantsService.addImages(id, body.images, user.id, effectiveRestaurantRole(user));
   }
 
   @Delete(':id/images')
@@ -144,7 +145,7 @@ export class RestaurantsController {
     @Body() body: { imageUrl: string },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.restaurantsService.removeImage(id, body.imageUrl, user.id, user.role);
+    return this.restaurantsService.removeImage(id, body.imageUrl, user.id, effectiveRestaurantRole(user));
   }
 
   @Patch(':id')
@@ -155,7 +156,7 @@ export class RestaurantsController {
     @Body() updateRestaurantDto: UpdateRestaurantDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.restaurantsService.update(id, updateRestaurantDto, user.id, user.role);
+    return this.restaurantsService.update(id, updateRestaurantDto, user.id, effectiveRestaurantRole(user));
   }
 
   @Delete(':id')
