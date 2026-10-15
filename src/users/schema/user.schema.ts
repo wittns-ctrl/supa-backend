@@ -62,6 +62,7 @@ export class User {
   @Prop()
   previousRefreshTokenExpiresAt?: Date;
   // Index declared below with sparse: true (most users never have one)
+  @Prop()
   resetToken?: string;
   @Prop()
   resetTokenExpiration?: Date;

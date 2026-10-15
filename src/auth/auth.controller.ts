@@ -93,6 +93,12 @@ export class AuthController implements OnModuleDestroy {
     return this.authService.signin(Logindto);
   }
 
+  @Post('check-customer-account')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  checkCustomerAccount(@Body() body: ForgotAuthDto) {
+    return this.authService.checkCustomerAccount(body.email);
+  }
+
   @Post('forgot')
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   forgotPassword(@Body() forgetDto: ForgotAuthDto) {

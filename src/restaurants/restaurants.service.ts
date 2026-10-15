@@ -64,8 +64,10 @@ export class RestaurantsService {
       cuisine: createRestdto.cuisine || 'International',
       amenities: createRestdto.amenities || [],
       verificationDocs: createRestdto.verificationDocs || [],
-      isApproved: false,
-      status: RestaurantStatus.PENDING,
+      // Newly registered restaurants should be visible on public restaurant
+      // pages and available for ordering as soon as registration succeeds.
+      isApproved: true,
+      status: RestaurantStatus.ACTIVE,
     });
 
     return this.formatRestaurant(created);
@@ -122,8 +124,10 @@ export class RestaurantsService {
     const filter: Record<string, unknown> = {};
 
     if (query.approvedOnly !== 'false') {
-      filter.isApproved = true;
-      filter.status = RestaurantStatus.ACTIVE;
+      // Make registrations visible immediately, including restaurants created
+      // before publication became automatic. Rejected and suspended listings
+      // remain hidden from public discovery.
+      filter.status = { $in: [RestaurantStatus.ACTIVE, RestaurantStatus.PENDING] };
     }
 
     if (query.search) {

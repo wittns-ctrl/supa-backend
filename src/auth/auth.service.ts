@@ -355,6 +355,15 @@ export class AuthService {
     };
   }
 
+  async checkCustomerAccount(email: string) {
+    const user = await this.findUserByEmail(email);
+    const isCustomer = user?.role === roles.CUSTOMER;
+    return {
+      isCustomerAccount: Boolean(isCustomer && user?.isVerified),
+      needsVerification: Boolean(isCustomer && !user?.isVerified),
+    };
+  }
+
   async resetpassword(resetDto: resetAuthDto) {
     // Token is hashed with SHA-256 before lookup → O(1) indexed query instead
     // of scanning and bcrypt-comparing up to 50 candidate rows per request.
