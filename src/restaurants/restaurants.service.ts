@@ -3,7 +3,6 @@ import {
   NotFoundException,
   UnauthorizedException,
   BadRequestException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
@@ -28,7 +27,7 @@ import { bookings, bookingsDocument } from 'src/bookings/schema/bookings.schema'
 import { menu, menuDocument } from 'src/menus/schema/menu.schema';
 
 @Injectable()
-export class RestaurantsService implements OnModuleInit {
+export class RestaurantsService {
   constructor(
     @InjectModel(restaurant.name)
     private readonly restaurantModel: Model<restaurantDocument>,
@@ -41,32 +40,6 @@ export class RestaurantsService implements OnModuleInit {
     @InjectModel(menu.name)
     private readonly menuModel: Model<menuDocument>,
   ) {}
-
-  async onModuleInit() {
-    // One-time, idempotent migration for accounts that predate restaurant
-    // memberships. Their business access follows the status of each listing.
-    const legacyOwners = await this.userModel.find({ role: roles.OWNER });
-    for (const user of legacyOwners) {
-      const ownedRestaurants = await this.restaurantModel.find({ ownerId: user._id });
-      const memberships = (user.restaurantMemberships || []) as any[];
-      for (const restaurant of ownedRestaurants) {
-        const restaurantId = restaurant._id.toString();
-        if (memberships.some((entry) => entry.restaurantId?.toString() === restaurantId)) continue;
-        let status = RestaurantMembershipStatus.PENDING;
-        if (restaurant.status === RestaurantStatus.ACTIVE && restaurant.isApproved) {
-          status = RestaurantMembershipStatus.ACTIVE;
-        } else if (restaurant.status === RestaurantStatus.REJECTED) {
-          status = RestaurantMembershipStatus.REJECTED;
-        } else if (restaurant.status === RestaurantStatus.SUSPENDED) {
-          status = RestaurantMembershipStatus.SUSPENDED;
-        }
-        memberships.push({ restaurantId: restaurant._id, role: 'owner', status });
-      }
-      user.restaurantMemberships = memberships as any;
-      user.role = roles.CUSTOMER;
-      await user.save();
-    }
-  }
 
   async createRestaurant(createRestdto: CreateRestaurantDto) {
     const user = await this.userModel.findById(createRestdto.ownerId);
@@ -104,7 +77,7 @@ export class RestaurantsService implements OnModuleInit {
   ) {
     const user = await this.userModel.findById(accountId);
     if (!user) throw new NotFoundException('user not found');
-    if (user.role !== roles.CUSTOMER && user.role !== roles.OWNER) {
+    if (user.accountType !== 'owner') {
       throw new UnauthorizedException(
         'Only a signed-in customer or restaurant owner can register a restaurant',
       );

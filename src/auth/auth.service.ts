@@ -11,7 +11,10 @@ import { resetAuthDto } from './dto/reset-auth.dto';
 import { ForgotAuthDto } from './dto/Forgot.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { roles, User, UserDocument } from '../users/schema/user.schema';
+import { AuthAccountType, RestaurantMembershipStatus, roles, User, UserDocument } from '../users/schema/user.schema';
+import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurants/schema/restaurant.schema';
+import { CreateOwnerAuthDto } from './dto/owner-signup-auth.dto';
+import { Types } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomInt, randomUUID, createHash, timingSafeEqual } from 'crypto';
@@ -65,6 +68,8 @@ export class AuthService {
   constructor(
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(restaurant.name)
+    private readonly restaurantModel: Model<restaurantDocument>,
     private readonly jwtservice: JwtService,
     private readonly mailservice: MailService,
   ) {}
@@ -73,17 +78,18 @@ export class AuthService {
     return email ? email.trim().toLowerCase() : '';
   }
 
-  private findUserByEmail(email: string) {
+  private findUserByEmail(email: string, accountType: AuthAccountType = AuthAccountType.CUSTOMER) {
     const normalized = this.normalizeEmail(email);
     if (!normalized) return null;
     return this.userModel.findOne({
+      accountType,
       email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'i') },
     });
   }
 
   async createUser(signupdto: CreateAuthDto) {
     const normalizedEmail = this.normalizeEmail(signupdto.email);
-    const existingUser = await this.findUserByEmail(normalizedEmail);
+    const existingUser = await this.findUserByEmail(normalizedEmail, AuthAccountType.CUSTOMER);
 
     if (existingUser) {
       if (existingUser.isVerified) {
@@ -95,6 +101,7 @@ export class AuthService {
       existingUser.name = signupdto.name || existingUser.name;
       existingUser.phone = signupdto.phone ?? existingUser.phone;
       existingUser.role = roles.CUSTOMER;
+      existingUser.accountType = AuthAccountType.CUSTOMER;
 
       const otp = randomInt(100000, 999999).toString();
       const expires = new Date();
@@ -129,6 +136,7 @@ export class AuthService {
       password: hashedPassword,
       phone: signupdto.phone,
       role,
+      accountType: AuthAccountType.CUSTOMER,
       isVerified: autoVerify,
       emailVerificationOtp: autoVerify ? undefined : hashToken(otp),
       emailVerificationOtpExpires: autoVerify ? undefined : expires,
@@ -148,8 +156,71 @@ export class AuthService {
     return { message: 'If this email can be registered, a verification code has been sent.' };
   }
 
-  async verifyOtp(VerifyDto: emailverificationDto) {
-    const user = await this.findUserByEmail(VerifyDto.email);
+  async createOwnerAccount(signup: CreateOwnerAuthDto) {
+    const email = this.normalizeEmail(signup.email);
+    validateBcryptPassword(signup.password);
+    const existing = await this.findUserByEmail(email, AuthAccountType.OWNER);
+    if (existing?.isVerified) {
+      return { message: 'If this email can be registered, a verification code has been sent.' };
+    }
+
+    const user = existing || new this.userModel({
+      name: signup.name,
+      email,
+      phone: signup.phone,
+      password: await bcrypt.hash(signup.password, 12),
+      role: roles.OWNER,
+      accountType: AuthAccountType.OWNER,
+      isVerified: false,
+      status: 'active',
+      restaurantMemberships: [],
+      authSessions: [],
+    });
+    if (existing) {
+      validateBcryptPassword(signup.password);
+      existing.password = await bcrypt.hash(signup.password, 12);
+      existing.name = signup.name;
+      existing.phone = signup.phone;
+      existing.role = roles.OWNER;
+      existing.accountType = AuthAccountType.OWNER;
+    }
+
+    const otp = randomInt(100000, 999999).toString();
+    const otpExpires = new Date(Date.now() + 5 * 60_000);
+    user.emailVerificationOtp = hashToken(otp);
+    user.emailVerificationOtpExpires = otpExpires;
+    user.emailVerificationOtpAttempts = 0;
+    await user.save();
+
+    const memberships: any[] = user.restaurantMemberships || [];
+    if (!memberships.length) {
+      let restaurant = await this.restaurantModel.findOne({
+        ownerId: user._id,
+        name: signup.restaurant.name,
+        status: RestaurantStatus.PENDING,
+      });
+      if (!restaurant) {
+        restaurant = await this.restaurantModel.create({
+          ...signup.restaurant,
+          ownerId: user._id,
+          isApproved: false,
+          status: RestaurantStatus.PENDING,
+        });
+      }
+      memberships.push({
+        restaurantId: restaurant._id as Types.ObjectId,
+        role: roles.OWNER,
+        status: RestaurantMembershipStatus.PENDING,
+      });
+      user.restaurantMemberships = memberships as any;
+      await user.save();
+    }
+    await this.mailservice.sendOtpEmail(email, otp);
+    return { message: 'If this email can be registered, a verification code has been sent.' };
+  }
+
+  async verifyOtp(VerifyDto: emailverificationDto, accountType = AuthAccountType.CUSTOMER) {
+    const user = await this.findUserByEmail(VerifyDto.email, accountType);
     const genericError = 'Invalid or expired verification code';
 
     if (!user) {
@@ -202,8 +273,8 @@ export class AuthService {
     };
   }
 
-  async signin(signinDto: loginAuthDto) {
-    const user = await this.findUserByEmail(signinDto.email);
+  async signin(signinDto: loginAuthDto, accountType = AuthAccountType.CUSTOMER) {
+    const user = await this.findUserByEmail(signinDto.email, accountType);
 
     if (!user) {
       throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
@@ -236,9 +307,9 @@ export class AuthService {
     };
   }
 
-  async resendOtp(email: string) {
+  async resendOtp(email: string, accountType = AuthAccountType.CUSTOMER) {
     const normalized = this.normalizeEmail(email);
-    const user = await this.findUserByEmail(normalized);
+    const user = await this.findUserByEmail(normalized, accountType);
 
     if (!user) {
       return { message: 'If an unverified account exists, a new code has been sent.' };
@@ -273,7 +344,7 @@ export class AuthService {
     providerId: string;
   }) {
     const normalizedEmail = this.normalizeEmail(data.email);
-    let user = await this.findUserByEmail(normalizedEmail);
+    let user = await this.findUserByEmail(normalizedEmail, AuthAccountType.CUSTOMER);
 
     if (user) {
       // Link OAuth provider if this is their first OAuth login
@@ -295,6 +366,7 @@ export class AuthService {
         name: data.name,
         email: normalizedEmail,
         role: roles.CUSTOMER,
+        accountType: AuthAccountType.CUSTOMER,
         isVerified: true,
         oauthProvider: data.provider,
         oauthProviderId: data.providerId,
@@ -315,6 +387,7 @@ export class AuthService {
       sub: user._id.toString(),
       email: user.email,
       role: user.role,
+      accountType: user.accountType,
       sid: sessionId,
     };
       const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
@@ -344,8 +417,8 @@ export class AuthService {
     return { accessToken, refreshToken: refreshtoken };
   }
 
-  async ForgotPassword(forgotDto: ForgotAuthDto) {
-    const user = await this.findUserByEmail(forgotDto.email);
+  async ForgotPassword(forgotDto: ForgotAuthDto, accountType = AuthAccountType.CUSTOMER) {
+    const user = await this.findUserByEmail(forgotDto.email, accountType);
 
     const resettoken = randomUUID();
 
@@ -360,7 +433,7 @@ export class AuthService {
       await user.save();
 
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-      const link = `${frontendUrl}/reset-password?token=${resettoken}`;
+      const link = `${frontendUrl}/reset-password?token=${resettoken}&accountType=${accountType}`;
       try {
         await this.mailservice.sendResetEmail(forgotDto.email, link);
       } catch (_err) {
@@ -374,13 +447,14 @@ export class AuthService {
     };
   }
 
-  async resetpassword(resetDto: resetAuthDto) {
+  async resetpassword(resetDto: resetAuthDto, accountType = AuthAccountType.CUSTOMER) {
     // Token is hashed with SHA-256 before lookup → O(1) indexed query instead
     // of scanning and bcrypt-comparing up to 50 candidate rows per request.
     const hashedToken = hashToken(resetDto.token);
     const user = await this.userModel
       .findOne({
         resetToken: hashedToken,
+        accountType,
         resetTokenExpiration: { $gt: new Date() },
       })
       .exec();
@@ -432,7 +506,7 @@ export class AuthService {
     return { message: 'user logged out successfully' };
   }
 
-  async refreshAccessToken(refreshToken: string) {
+  async refreshAccessToken(refreshToken: string, accountType = AuthAccountType.CUSTOMER) {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token is required');
     }
@@ -448,6 +522,9 @@ export class AuthService {
 
     const userId = payload.sub;
     const user = await this.userModel.findById(userId);
+    if (payload.accountType !== accountType || user?.accountType !== accountType) {
+      throw new UnauthorizedException('Refresh session belongs to another account type');
+    }
     if (!user || !payload.sid || !user.authSessions?.length) {
       throw new UnauthorizedException('Refresh token has been revoked');
     }

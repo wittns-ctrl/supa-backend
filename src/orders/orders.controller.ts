@@ -27,6 +27,8 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles(roles.CUSTOMER)
   create(@Body() createOrderDto: CreateOrderDto, @CurrentUser() user: { id: string; role: string }) {
     return this.ordersService.create(createOrderDto, user.id, user.role);
   }
@@ -56,7 +58,7 @@ export class OrdersController {
 
   @Get(':id/tracking')
   getTracking(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.ordersService.getTracking(id, user.id, (user as any).roles?.join(',') || user.role);
+    return this.ordersService.getTracking(id, user.id, (user as any).roles?.join(',') ?? user.role);
   }
 
   @Post(':id/reorder')
@@ -79,7 +81,7 @@ export class OrdersController {
 
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.ordersService.findOne(id, user.id, (user as any).roles?.join(',') || user.role);
+    return this.ordersService.findOne(id, user.id, (user as any).roles?.join(',') ?? user.role);
   }
 
   @Patch(':id/status')
@@ -90,6 +92,6 @@ export class OrdersController {
     @Body() body: { status: OrderStatus },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.ordersService.updateStatus(id, body.status, user.id, (user as any).roles?.join(',') || user.role);
+    return this.ordersService.updateStatus(id, body.status, user.id, (user as any).roles?.join(',') ?? user.role);
   }
 }

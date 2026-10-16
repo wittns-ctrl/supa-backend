@@ -27,6 +27,8 @@ export class BookingsController {
   constructor(private readonly bookingsService: BookingsService) {}
 
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles(roles.CUSTOMER)
   create(
     @Body() createBookingDto: CreateBookingDto,
     @CurrentUser() user: { id: string; role: string },
@@ -61,7 +63,7 @@ export class BookingsController {
 
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.bookingsService.findOne(id, user.id, (user as any).roles?.join(',') || user.role);
+    return this.bookingsService.findOne(id, user.id, (user as any).roles?.join(',') ?? user.role);
   }
 
   @Patch(':id')
@@ -72,12 +74,12 @@ export class BookingsController {
     @Body() updateBookingDto: UpdateBookingDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.bookingsService.update(id, updateBookingDto, user.id, (user as any).roles?.join(',') || user.role);
+    return this.bookingsService.update(id, updateBookingDto, user.id, (user as any).roles?.join(',') ?? user.role);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.bookingsService.remove(id, user.id, (user as any).roles?.join(',') || user.role);
+    return this.bookingsService.remove(id, user.id, (user as any).roles?.join(',') ?? user.role);
   }
 
   @Delete(':id/history')

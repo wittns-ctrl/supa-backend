@@ -33,6 +33,8 @@ import { OAuthCodeRecord } from './schema/oauth-record.schema';
 import passport from 'passport';
 import { OAuthStateService } from './oauth-state.service';
 import { isProductionEnv } from 'src/config/env.validation';
+import { AuthAccountType } from 'src/users/schema/user.schema';
+import { CreateOwnerAuthDto } from './dto/owner-signup-auth.dto';
 
 // Short-lived one-time codes for the OAuth code exchange flow. Tokens are
 // never placed in the redirect URL — the frontend swaps a code for tokens.
@@ -101,9 +103,13 @@ export class AuthController {
     }
   }
 
-  private authResponse(res: Response, result: any) {
+  private refreshCookieName(accountType: AuthAccountType) {
+    return `supa_refresh_${accountType}`;
+  }
+
+  private authResponse(res: Response, result: any, accountType = AuthAccountType.CUSTOMER) {
     if (result?.refreshToken) {
-      res.cookie('supa_refresh', result.refreshToken, {
+      res.cookie(this.refreshCookieName(accountType), result.refreshToken, {
         ...refreshCookieOptions(),
         maxAge: refreshCookieMaxAge(),
       });
@@ -118,35 +124,105 @@ export class AuthController {
     return this.authService.createUser(signupdto);
   }
 
+  @Post('customer/signup')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  customerSignup(@Body() signupdto: CreateAuthDto) {
+    return this.authService.createUser(signupdto);
+  }
+
+  @Post('owner/signup')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  ownerSignup(@Body() signupdto: CreateOwnerAuthDto) {
+    return this.authService.createOwnerAccount(signupdto);
+  }
+
   @Post('verifyOtp')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async verifyOtp(@Body() verifydto: emailverificationDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.verifyOtp(verifydto));
+    return this.authResponse(res, await this.authService.verifyOtp(verifydto, AuthAccountType.CUSTOMER));
+  }
+
+  @Post('owner/verify-otp')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async verifyOwnerOtp(@Body() dto: emailverificationDto, @Res({ passthrough: true }) res: Response) {
+    return this.authResponse(res, await this.authService.verifyOtp(dto, AuthAccountType.OWNER), AuthAccountType.OWNER);
   }
 
   @Post('resend-otp')
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   resendOtp(@Body() body: { email: string }) {
-    return this.authService.resendOtp(body.email);
+    return this.authService.resendOtp(body.email, AuthAccountType.CUSTOMER);
+  }
+
+  @Post('owner/resend-otp')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  resendOwnerOtp(@Body() body: { email: string }) {
+    return this.authService.resendOtp(body.email, AuthAccountType.OWNER);
   }
 
   @Post('login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async Login(@Body() Logindto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.signin(Logindto));
+    return this.authResponse(res, await this.authService.signin(Logindto, AuthAccountType.CUSTOMER));
+  }
+
+  @Post('customer/login')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async customerLogin(@Body() dto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
+    return this.authResponse(res, await this.authService.signin(dto, AuthAccountType.CUSTOMER));
+  }
+
+  @Post('owner/login')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async ownerLogin(@Body() dto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
+    return this.authResponse(res, await this.authService.signin(dto, AuthAccountType.OWNER), AuthAccountType.OWNER);
+  }
+
+  @Post('admin/login')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async adminLogin(@Body() dto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
+    return this.authResponse(res, await this.authService.signin(dto, AuthAccountType.ADMIN), AuthAccountType.ADMIN);
   }
 
   @Post('forgot')
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   forgotPassword(@Body() forgetDto: ForgotAuthDto) {
-    return this.authService.ForgotPassword(forgetDto);
+    return this.authService.ForgotPassword(forgetDto, AuthAccountType.CUSTOMER);
+  }
+
+  @Post('owner/forgot')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  ownerForgotPassword(@Body() dto: ForgotAuthDto) {
+    return this.authService.ForgotPassword(dto, AuthAccountType.OWNER);
+  }
+
+  @Post('admin/forgot')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  adminForgotPassword(@Body() dto: ForgotAuthDto) {
+    return this.authService.ForgotPassword(dto, AuthAccountType.ADMIN);
   }
 
   @Post('reset')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async resetpassword(@Body() resetdto: resetAuthDto, @Res({ passthrough: true }) res: Response) {
-    const result = await this.authService.resetpassword(resetdto);
-    res.clearCookie('supa_refresh', refreshCookieOptions());
+    const result = await this.authService.resetpassword(resetdto, AuthAccountType.CUSTOMER);
+    res.clearCookie(this.refreshCookieName(AuthAccountType.CUSTOMER), refreshCookieOptions());
+    return result;
+  }
+
+  @Post('owner/reset')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async resetOwnerPassword(@Body() dto: resetAuthDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.authService.resetpassword(dto, AuthAccountType.OWNER);
+    res.clearCookie(this.refreshCookieName(AuthAccountType.OWNER), refreshCookieOptions());
+    return result;
+  }
+
+  @Post('admin/reset')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async resetAdminPassword(@Body() dto: resetAuthDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.authService.resetpassword(dto, AuthAccountType.ADMIN);
+    res.clearCookie(this.refreshCookieName(AuthAccountType.ADMIN), refreshCookieOptions());
     return result;
   }
 
@@ -154,22 +230,39 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   logout(
     @Res({ passthrough: true }) res: Response,
-    @CurrentUser() user: { id: string; email: string; role: string; sessionId: string },
+    @CurrentUser() user: { id: string; email: string; role: string; sessionId: string; accountType: AuthAccountType },
   ) {
-    res.clearCookie('supa_refresh', refreshCookieOptions());
+    res.clearCookie(this.refreshCookieName(user.accountType), refreshCookieOptions());
     return this.authService.Logout({}, user);
   }
 
   @Post('refresh')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async refresh(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+    return this.refreshRealm(req, res, AuthAccountType.CUSTOMER);
+  }
+
+  @Post('owner/refresh')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  ownerRefresh(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+    return this.refreshRealm(req, res, AuthAccountType.OWNER);
+  }
+
+  @Post('admin/refresh')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  adminRefresh(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+    return this.refreshRealm(req, res, AuthAccountType.ADMIN);
+  }
+
+  private async refreshRealm(req: any, res: Response, accountType: AuthAccountType) {
     this.assertTrustedOrigin(req);
-    const refreshToken = this.readCookie(req, 'supa_refresh');
+    const cookieName = this.refreshCookieName(accountType);
+    const refreshToken = this.readCookie(req, cookieName);
     if (!refreshToken) throw new UnauthorizedException('Refresh session is missing');
     try {
-      return this.authResponse(res, await this.authService.refreshAccessToken(refreshToken));
+      return this.authResponse(res, await this.authService.refreshAccessToken(refreshToken, accountType), accountType);
     } catch (error) {
-      res.clearCookie('supa_refresh', refreshCookieOptions());
+      res.clearCookie(cookieName, refreshCookieOptions());
       throw error;
     }
   }

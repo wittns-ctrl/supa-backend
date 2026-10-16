@@ -17,14 +17,17 @@ export function sanitizeUser(user: UserDocument) {
     role: membership.role,
     status: membership.status,
   }));
-  const roles = new Set<string>([obj.role]);
+  const roles = new Set<string>();
+  if (obj.accountType === 'customer') roles.add('customer');
+  if (obj.accountType === 'admin') roles.add('admin');
   for (const membership of restaurantMemberships) {
-    if (membership.status === 'active') roles.add(membership.role);
+    if (obj.accountType === 'owner' && membership.status === 'active') roles.add(membership.role);
   }
   return {
     ...obj,
     id: obj._id.toString(),
     role: obj.role,
+    accountType: obj.accountType,
     roles: [...roles],
     restaurantMemberships,
     joinDate: obj.createdAt

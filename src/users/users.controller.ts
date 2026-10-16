@@ -18,6 +18,7 @@ import { Roles } from 'src/common/decorators/roles.decorator';
 import { roles, UserStatus } from './schema/user.schema';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { SetUserStatusDto } from './dto/set-status.dto';
+import { CreateAuthDto } from 'src/auth/dto/signup-auth.dto';
 
 @Controller('users')
 export class UsersController {
@@ -99,6 +100,13 @@ export class UsersController {
   @Roles(roles.ADMIN)
   setRole(@Param('id') id: string, @Body() body: SetUserRoleDto) {
     return this.usersService.setRole(id, body.role);
+  }
+
+  @Post('admin-accounts')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(roles.ADMIN)
+  createAdminAccount(@Body() dto: CreateAuthDto) {
+    return this.usersService.createAdminAccount(dto);
   }
 
   @Patch(':id')

@@ -39,8 +39,8 @@ export class CreateAuthDto {
   })
   phone?: string;
 
-  // Public registration can request only customer access. Owner membership is
-  // granted by the authenticated restaurant onboarding and admin approval flow.
+  // Customer signup cannot request elevated access. Owner registration uses
+  // its own endpoint and remains pending until administrator approval.
   @IsOptional()
   @IsString()
   @IsIn(['customer'], { message: 'Public signup only supports customer accounts' })

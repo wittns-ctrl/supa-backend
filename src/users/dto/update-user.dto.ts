@@ -87,8 +87,8 @@ export class UpdateUserDto {
   profile?: ProfileDto;
 }
 
-/** Admin-only role assignment (promote/demote accounts). */
+/** Admin-only operation limited to retaining customer account type. */
 export class SetUserRoleDto {
-  @IsIn(['customer', 'admin'])
-  role!: 'customer' | 'admin';
+  @IsIn(['customer'])
+  role!: 'customer';
 }

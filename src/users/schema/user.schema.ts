@@ -9,6 +9,12 @@ export enum roles {
   ADMIN = 'admin',
 }
 
+export enum AuthAccountType {
+  CUSTOMER = 'customer',
+  OWNER = 'owner',
+  ADMIN = 'admin',
+}
+
 export enum UserStatus {
   ACTIVE = 'active',
   BLOCKED = 'blocked',
@@ -77,8 +83,10 @@ export class DeliveryAddress {
 export class User {
   @Prop({ required: true })
   name!: string;
-  @Prop({ required: true, unique: true, index: true })
+  @Prop({ required: true })
   email!: string;
+  @Prop({ type: String, enum: Object.values(AuthAccountType), default: AuthAccountType.CUSTOMER, required: true })
+  accountType!: AuthAccountType;
   @Prop()
   password?: string;
   // Phone stored as string — Numbers drop leading zeros and "+" country codes
@@ -130,3 +138,4 @@ export const Userschema = SchemaFactory.createForClass(User);
 
 // Lookup by hashed refresh/reset/OTP tokens must be fast and indexed
 Userschema.index({ resetToken: 1 }, { sparse: true });
+Userschema.index({ email: 1, accountType: 1 }, { unique: true, name: 'email_account_type_unique' });

@@ -3,22 +3,25 @@ import {
   NotFoundException,
   UnauthorizedException,
   BadRequestException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument, UserStatus, roles } from './schema/user.schema';
-import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
+import { AuthAccountType, RestaurantMembershipStatus, User, UserDocument, UserStatus, roles } from './schema/user.schema';
+import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurants/schema/restaurant.schema';
 import { order, orderDocument } from 'src/orders/schema/order.schema';
 import { bookings, bookingsDocument, reviewsEnums } from 'src/bookings/schema/bookings.schema';
 import { review, reviewDocument } from 'src/reviews/schema/review.schema';
 import { notification, notificationDocument } from 'src/notifications/schema/notifications.schema';
 import * as bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import { sanitizeUser } from 'src/common/utils/user-response.util';
+import { CreateAuthDto } from 'src/auth/dto/signup-auth.dto';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
@@ -33,6 +36,94 @@ export class UsersService {
     @InjectModel(notification.name)
     private readonly notificationModel: Model<notificationDocument>,
   ) {}
+
+  async onModuleInit() {
+    // Replace the legacy email-only unique index with one account per email
+    // and auth realm. This is idempotent and keeps existing customer/admin
+    // accounts available while splitting old restaurant memberships.
+    await this.userModel.collection.dropIndex('email_1').catch(() => undefined);
+    await this.userModel.collection.createIndex(
+      { email: 1, accountType: 1 },
+      { unique: true, name: 'email_account_type_unique' },
+    );
+
+    const users = await this.userModel.find({
+      $or: [{ accountType: { $exists: false } }, { accountType: null }],
+    });
+    for (const user of users) {
+      const legacyRole = user.role;
+      user.accountType = legacyRole === roles.ADMIN
+        ? AuthAccountType.ADMIN
+        : legacyRole === roles.OWNER
+          ? AuthAccountType.OWNER
+          : AuthAccountType.CUSTOMER;
+
+      const oldMemberships = [...(user.restaurantMemberships || [])] as any[];
+      if (user.accountType === AuthAccountType.CUSTOMER && oldMemberships.length) {
+        let owner = await this.userModel.findOne({
+          email: user.email,
+          accountType: AuthAccountType.OWNER,
+        });
+        if (!owner) {
+          const source = user.toObject() as any;
+          delete source._id;
+          delete source.__v;
+          delete source.createdAt;
+          delete source.updatedAt;
+          const initialPassword = await bcrypt.hash(randomBytes(32).toString('hex'), 12);
+          owner = await this.userModel.create({
+            ...source,
+            password: initialPassword,
+            role: roles.OWNER,
+            accountType: AuthAccountType.OWNER,
+            restaurantMemberships: oldMemberships,
+            authSessions: [],
+            refreshToken: undefined,
+            previousRefreshToken: undefined,
+            previousRefreshTokenExpiresAt: undefined,
+            resetToken: undefined,
+            resetTokenExpiration: undefined,
+            emailVerificationOtp: undefined,
+            emailVerificationOtpExpires: undefined,
+            emailVerificationOtpAttempts: 0,
+          });
+        } else {
+          const existingRestaurantIds = new Set(
+            (owner.restaurantMemberships || []).map((entry: any) => entry.restaurantId?.toString()),
+          );
+          owner.restaurantMemberships = [
+            ...(owner.restaurantMemberships || []),
+            ...oldMemberships.filter((entry) => !existingRestaurantIds.has(entry.restaurantId?.toString())),
+          ] as any;
+          owner.authSessions = [];
+          await owner.save();
+        }
+        await this.restaurantModel.updateMany(
+          { ownerId: user._id },
+          { $set: { ownerId: owner._id } },
+        );
+        user.restaurantMemberships = [];
+        user.authSessions = [];
+      }
+
+      if (user.accountType === AuthAccountType.OWNER && !user.restaurantMemberships?.length) {
+        const owned = await this.restaurantModel.find({ ownerId: user._id });
+        user.restaurantMemberships = owned.map((restaurant) => ({
+          restaurantId: restaurant._id,
+          role: roles.OWNER,
+          status: restaurant.status === RestaurantStatus.ACTIVE && restaurant.isApproved
+            ? RestaurantMembershipStatus.ACTIVE
+            : restaurant.status === RestaurantStatus.REJECTED
+              ? RestaurantMembershipStatus.REJECTED
+              : restaurant.status === RestaurantStatus.SUSPENDED
+                ? RestaurantMembershipStatus.SUSPENDED
+                : RestaurantMembershipStatus.PENDING,
+        })) as any;
+      }
+
+      await user.save();
+    }
+  }
 
   private assertSelfOrAdmin(
     targetId: Types.ObjectId | string,
@@ -54,7 +145,7 @@ export class UsersService {
     const filter: Record<string, unknown> = {};
     if (role) {
       const mappedRole = role === 'owner' || role === 'restaurant_owner' ? 'owner' : role;
-      filter.role = mappedRole;
+      filter.accountType = mappedRole;
     }
     if (status) filter.status = status;
 
@@ -83,8 +174,11 @@ export class UsersService {
     this.assertSelfOrAdmin(id, userId, userRole);
 
     if (updateUserDto.email) {
+      const account = await this.userModel.findById(id).select('accountType');
+      if (!account) throw new NotFoundException('User not found');
       const normalized = updateUserDto.email.trim().toLowerCase();
       const existing = await this.userModel.findOne({
+        accountType: account.accountType,
         email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
       });
       if (existing && existing._id.toString() !== id) {
@@ -100,13 +194,16 @@ export class UsersService {
     return this.formatUser(user);
   }
 
-  /** Admin-only role assignment — the safe path for promote/demote. */
-  async setRole(id: string, role: 'customer' | 'admin') {
+  /** Customer accounts remain customer accounts; admin accounts are separate records. */
+  async setRole(id: string, role: 'customer') {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid user id');
     }
     const user = await this.userModel.findById(id);
     if (!user) throw new NotFoundException('User not found');
+    if (user.accountType !== AuthAccountType.CUSTOMER) {
+      throw new BadRequestException('Only customer accounts can be demoted through this endpoint');
+    }
     if (user.role !== role) {
       user.role = role as roles;
       // Access JWTs consult the persisted session on every request, so clearing
@@ -117,6 +214,28 @@ export class UsersService {
       user.previousRefreshTokenExpiresAt = undefined;
       await user.save();
     }
+    return this.formatUser(user);
+  }
+
+  async createAdminAccount(dto: CreateAuthDto) {
+    const email = dto.email.trim().toLowerCase();
+    const existing = await this.userModel.findOne({ email, accountType: AuthAccountType.ADMIN });
+    if (existing) throw new BadRequestException('An administrator account already exists for this email');
+    if (Buffer.byteLength(dto.password, 'utf8') > 72) {
+      throw new BadRequestException('Password cannot exceed 72 UTF-8 bytes');
+    }
+    const user = await this.userModel.create({
+      name: dto.name,
+      email,
+      phone: dto.phone,
+      password: await bcrypt.hash(dto.password, 12),
+      role: roles.ADMIN,
+      accountType: AuthAccountType.ADMIN,
+      isVerified: true,
+      status: UserStatus.ACTIVE,
+      restaurantMemberships: [],
+      authSessions: [],
+    });
     return this.formatUser(user);
   }
 

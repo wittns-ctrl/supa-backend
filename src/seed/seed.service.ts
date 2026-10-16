@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { User, UserDocument, roles } from 'src/users/schema/user.schema';
+import { AuthAccountType, RestaurantMembershipStatus, User, UserDocument, roles } from 'src/users/schema/user.schema';
 import {
   restaurant,
   restaurantDocument,
@@ -49,7 +49,7 @@ export class SeedService implements OnModuleInit {
   async seed() {
     const password = await bcrypt.hash('Password123!', 10);
 
-    let admin = await this.userModel.findOne({ email: 'admin@supameal.com' });
+    let admin = await this.userModel.findOne({ email: 'admin@supameal.com', accountType: AuthAccountType.ADMIN });
     if (!admin) {
       admin = await this.userModel.create({
         name: 'Admin User',
@@ -57,11 +57,12 @@ export class SeedService implements OnModuleInit {
         password,
         phone: '1000000001',
         role: roles.ADMIN,
+        accountType: AuthAccountType.ADMIN,
         isVerified: true,
       });
     }
 
-    let owner = await this.userModel.findOne({ email: 'maria@goldenplate.com' });
+    let owner = await this.userModel.findOne({ email: 'maria@goldenplate.com', accountType: AuthAccountType.OWNER });
     if (!owner) {
       owner = await this.userModel.create({
         name: 'Maria Santos',
@@ -69,11 +70,12 @@ export class SeedService implements OnModuleInit {
         password,
         phone: '1000000002',
         role: roles.OWNER,
+        accountType: AuthAccountType.OWNER,
         isVerified: true,
       });
     }
 
-    let customer = await this.userModel.findOne({ email: 'alex@supameal.com' });
+    let customer = await this.userModel.findOne({ email: 'alex@supameal.com', accountType: AuthAccountType.CUSTOMER });
     if (!customer) {
       customer = await this.userModel.create({
         name: 'Alex Johnson',
@@ -81,6 +83,7 @@ export class SeedService implements OnModuleInit {
         password,
         phone: '1000000003',
         role: roles.CUSTOMER,
+        accountType: AuthAccountType.CUSTOMER,
         isVerified: true,
       });
     }
@@ -145,7 +148,14 @@ export class SeedService implements OnModuleInit {
       for (const item of menuItems) {
         await this.menuModel.create({ ...item, restaurant: created._id });
       }
+      owner.restaurantMemberships = owner.restaurantMemberships || [];
+      owner.restaurantMemberships.push({
+        restaurantId: created._id,
+        role: roles.OWNER,
+        status: RestaurantMembershipStatus.ACTIVE,
+      } as any);
     }
+    await owner.save();
 
     this.logger.log('Database seeded with demo data');
     this.logger.log('Demo accounts (password: Password123!):');

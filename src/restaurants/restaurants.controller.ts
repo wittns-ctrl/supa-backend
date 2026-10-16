@@ -31,19 +31,19 @@ export class RestaurantsController {
   @UseGuards(JwtAuthGuard)
   create(
     @Body() createRestaurantDto: CreateRestaurantDto,
-    @CurrentUser() user: { id: string; role: string },
+    @CurrentUser() user: { id: string; role: string; accountType?: string },
   ) {
-    if (user.role === roles.CUSTOMER || userHasRole(user, roles.OWNER)) {
+    if (user.accountType === 'owner' && userHasRole(user, roles.OWNER)) {
       return this.restaurantsService.createRestaurantForAccount(
         createRestaurantDto,
         user.id,
       );
     }
-    if (user.role === roles.ADMIN) {
+    if (user.accountType === 'admin' && user.role === roles.ADMIN) {
       return this.restaurantsService.createRestaurant(createRestaurantDto);
     }
     throw new UnauthorizedException(
-      'Sign in to a customer account before registering a restaurant',
+      'Use the restaurant owner application to create a separate owner account',
     );
   }
 

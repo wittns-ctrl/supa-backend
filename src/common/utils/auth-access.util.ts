@@ -6,5 +6,6 @@ export function userHasRole(user: any, role: string): boolean {
 export function effectiveRestaurantRole(user: any): string {
   if (userHasRole(user, 'admin')) return 'admin';
   if (userHasRole(user, 'owner')) return 'owner';
-  return user?.role || '';
+  if (userHasRole(user, 'customer')) return 'customer';
+  return '';
 }
