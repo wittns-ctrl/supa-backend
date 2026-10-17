@@ -53,15 +53,25 @@ export class RestaurantsController {
     @Query('cuisine') cuisine?: string,
     @Query('location') location?: string,
     @Query('rating') rating?: string,
-    @Query('approvedOnly') approvedOnly?: string,
   ) {
     return this.restaurantsService.findAll({
       search,
       cuisine,
       location,
       rating,
-      approvedOnly,
     });
+  }
+
+  @Get('admin/all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(roles.ADMIN)
+  findAllForAdmin(
+    @Query('search') search?: string,
+    @Query('cuisine') cuisine?: string,
+    @Query('location') location?: string,
+    @Query('rating') rating?: string,
+  ) {
+    return this.restaurantsService.findAll({ search, cuisine, location, rating }, true);
   }
 
   @Get('owner/:ownerId')
@@ -71,6 +81,15 @@ export class RestaurantsController {
       throw new UnauthorizedException('You are not authorized to view these restaurants');
     }
     return this.restaurantsService.findByOwner(ownerId);
+  }
+
+  @Get(':id/owner-view')
+  @UseGuards(JwtAuthGuard)
+  findOneForOwner(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.restaurantsService.findOneForOwner(id, user.id, effectiveRestaurantRole(user));
   }
 
   @Get(':id/analytics/overview')

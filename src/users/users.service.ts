@@ -188,7 +188,7 @@ export class UsersService implements OnModuleInit {
     }
 
     const user = await this.userModel
-      .findByIdAndUpdate(id, updateUserDto, { new: true, runValidators: true })
+      .findByIdAndUpdate(id, updateUserDto, { returnDocument: 'after', runValidators: true })
       .select('-password -refreshToken');
     if (!user) throw new NotFoundException('User not found');
     return this.formatUser(user);
@@ -280,11 +280,17 @@ export class UsersService implements OnModuleInit {
     if (!Types.ObjectId.isValid(restaurantId)) {
       throw new BadRequestException('Invalid restaurant id');
     }
+    const visibleRestaurant = await this.restaurantModel.findOne({
+      _id: restaurantId,
+      isApproved: true,
+      status: RestaurantStatus.ACTIVE,
+    }).select('_id').exec();
+    if (!visibleRestaurant) throw new NotFoundException('Restaurant not found');
     const user = await this.userModel
       .findByIdAndUpdate(
         targetUserId,
         { $addToSet: { favorites: restaurantId } },
-        { new: true },
+        { returnDocument: 'after' },
       )
       .populate('favorites');
     if (!user) throw new NotFoundException('User not found');
@@ -302,7 +308,7 @@ export class UsersService implements OnModuleInit {
       .findByIdAndUpdate(
         targetUserId,
         { $pull: { favorites: restaurantId } },
-        { new: true },
+        { returnDocument: 'after' },
       )
       .populate('favorites');
     if (!user) throw new NotFoundException('User not found');
@@ -320,6 +326,8 @@ export class UsersService implements OnModuleInit {
 
     const favorites = await this.restaurantModel.find({
       _id: { $in: user.favorites },
+      isApproved: true,
+      status: RestaurantStatus.ACTIVE,
     });
 
     return favorites.map((r) => ({

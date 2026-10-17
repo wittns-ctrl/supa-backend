@@ -6,8 +6,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { User, Userschema } from 'src/users/schema/user.schema';
 import { order, orderSchema } from 'src/orders/schema/order.schema';
 import { bookings, bookingschema } from 'src/bookings/schema/bookings.schema';
+import { payment, paymentschema } from 'src/payments/schema/payments.schema';
 import { menu, menuschema } from 'src/menus/schema/menu.schema';
 import { AuthModule } from 'src/auth/auth.module';
+import { MailModule } from 'src/mail/mail.module';
 
 @Module({
   imports: [
@@ -16,9 +18,11 @@ import { AuthModule } from 'src/auth/auth.module';
       { name: User.name, schema: Userschema },
       { name: order.name, schema: orderSchema },
       { name: bookings.name, schema: bookingschema },
+      { name: payment.name, schema: paymentschema },
       { name: menu.name, schema: menuschema },
     ]),
     AuthModule,
+    MailModule,
   ],
   controllers: [RestaurantsController],
   providers: [RestaurantsService],

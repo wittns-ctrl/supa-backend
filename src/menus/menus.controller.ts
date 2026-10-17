@@ -38,6 +38,20 @@ export class MenusController {
     return this.menusService.findAll(restaurantId);
   }
 
+  @Get('owner/:restaurantId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(roles.OWNER, roles.ADMIN)
+  findAllForOwner(
+    @Param('restaurantId') restaurantId: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.menusService.findAllForOwner(
+      restaurantId,
+      user.id,
+      effectiveRestaurantRole(user),
+    );
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.menusService.findOne(id);

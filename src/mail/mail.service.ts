@@ -6,6 +6,8 @@ import * as nodemailer from 'nodemailer';
 import { CreateMailDto } from './dto/create-mail.dto';
 import { NewsletterUpdateDto } from './dto/newsletter-update.dto';
 import { NewsletterSubscriber, NewsletterSubscriberDocument } from './schema/newsletter-subscriber.schema';
+import { User, UserDocument, roles, UserStatus } from 'src/users/schema/user.schema';
+import { notification, notificationDocument } from 'src/notifications/schema/notifications.schema';
 
 /**
  * MailService — tries SMTP first (works with any recipient); falls back to
@@ -46,6 +48,12 @@ export class MailService implements OnModuleInit {
     @Optional()
     @InjectModel(NewsletterSubscriber.name)
     private readonly subscriberModel?: Model<NewsletterSubscriberDocument>,
+    @Optional()
+    @InjectModel(User.name)
+    private readonly userModel?: Model<UserDocument>,
+    @Optional()
+    @InjectModel(notification.name)
+    private readonly notificationModel?: Model<notificationDocument>,
   ) {
     this.resendApiKey = process.env.RESEND_API_KEY?.trim() || null;
     this.initTransporter();
@@ -99,7 +107,7 @@ export class MailService implements OnModuleInit {
     // alone (HTTP 403 for everyone else), so it cannot be trusted first.
     if (!this.transporter) {
       this.logger.warn(
-        '⚠️  No email provider configured. OTPs/links will be logged to console.\n' +
+        '⚠️  No SMTP provider configured. Authentication emails cannot be delivered until SMTP or Resend is configured.\n' +
         '   → Option A (Gmail): Set SMTP_USER + SMTP_PASS (Gmail App Password) in .env\n' +
         '   → Option B (Free): Sign up at https://resend.com and set RESEND_API_KEY in .env',
       );
@@ -114,7 +122,7 @@ export class MailService implements OnModuleInit {
       this.smtpReady = false;
       this.logger.warn(
         `⚠️  SMTP FAILED: ${err.message}\n` +
-        '   OTPs/reset links will be printed to this console instead.\n' +
+        '   SMTP delivery is unavailable; Resend will be used as fallback when configured.\n' +
         '   Fix options:\n' +
         '   A) Gmail App Password: https://myaccount.google.com/apppasswords → update SMTP_PASS in .env\n' +
         '   B) Free email (Resend): https://resend.com → set RESEND_API_KEY in .env (100 emails/day free)',
@@ -201,31 +209,71 @@ export class MailService implements OnModuleInit {
   }
 
   // ── Send OTP email ────────────────────────────────────────────────────────
-  async sendOtpEmail(to: string, otp: string) {
+  async sendOtpEmail(to: string, otp: string, accountType: 'customer' | 'owner' = 'customer') {
     // Secret OTP is sent via email only - never printed to console logs
-    const subject = '🍽️ Your SupaMeal Verification Code';
+    const isOwner = accountType === 'owner';
+    const subject = isOwner
+      ? 'SupaMeal restaurant owner email verification'
+      : '🍽️ Your SupaMeal Verification Code';
+    const heading = isOwner ? 'Restaurant owner verification' : 'Email Verification';
+    const introduction = isOwner
+      ? 'Use this code to verify the email address for your SupaMeal restaurant owner account. Your restaurant application will be reviewed after verification.'
+      : 'Hello! Use the code below to verify your email address.';
+    const footer = isOwner
+      ? 'If you did not submit a restaurant registration, you can safely ignore this email.'
+      : "If you didn't create a SupaMeal account, you can safely ignore this email.";
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;">
         <div style="text-align:center;margin-bottom:24px;">
           <h1 style="color:#f5a623;font-size:22px;margin:0;">SupaMeal</h1>
-          <p style="color:#999;font-size:13px;margin:4px 0 0;">Email Verification</p>
+          <p style="color:#999;font-size:13px;margin:4px 0 0;">${heading}</p>
         </div>
-        <p style="color:#e0e0e0;font-size:15px;">Hello! Use the code below to verify your email address.</p>
+        <p style="color:#e0e0e0;font-size:15px;">${introduction}</p>
         <div style="background:#111;border:2px solid #f5a623;border-radius:12px;padding:28px;text-align:center;margin:24px 0;">
           <span style="font-size:42px;font-weight:900;letter-spacing:14px;color:#f5a623;">${otp}</span>
         </div>
         <p style="color:#888;font-size:13px;text-align:center;">This code expires in <strong style="color:#e0e0e0;">5 minutes</strong>. Do not share it with anyone.</p>
         <hr style="border:none;border-top:1px solid #333;margin:24px 0;" />
-        <p style="color:#555;font-size:12px;text-align:center;">If you didn't create a SupaMeal account, you can safely ignore this email.</p>
+        <p style="color:#555;font-size:12px;text-align:center;">${footer}</p>
       </div>
     `;
-    const text = `Your SupaMeal verification code is: ${otp}\nIt expires in 5 minutes.`;
+    const text = `${isOwner ? 'Verify your SupaMeal restaurant owner email' : 'Your SupaMeal verification code'}: ${otp}\nIt expires in 5 minutes.${isOwner ? '\nYour restaurant application will be reviewed after verification.' : ''}`;
 
     const sent = await this.deliver(to, subject, html, text);
 
     if (!sent) {
-      this.logger.warn(`[OTP] Email delivery attempt completed for ${to}.`);
+      this.logger.error(`[OTP] Email delivery failed for ${to}.`);
+      throw new ServiceUnavailableException(
+        'We could not send the verification email right now. Please try again shortly or request a new code.',
+      );
     }
+  }
+
+  async sendOwnerVerificationCompleteEmail(to: string, ownerName: string, restaurantName: string) {
+    const safeOwnerName = escapeHtml(ownerName || 'there');
+    const safeRestaurantName = escapeHtml(restaurantName || 'your restaurant');
+    const subject = 'SupaMeal received your restaurant application';
+    const html = `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;"><h1 style="color:#f5a623;font-size:22px;">SupaMeal</h1><p style="color:#e0e0e0;font-size:15px;">Hello ${safeOwnerName}, your email is verified and we received the application for <strong>${safeRestaurantName}</strong>.</p><p style="color:#e0e0e0;font-size:15px;">Our team will review the restaurant details. You can sign in to the restaurant owner portal after your application is approved.</p><p style="color:#999;font-size:13px;">We will email you when the review is complete.</p></div>`;
+    const text = `Hello ${ownerName || 'there'}, your email is verified and we received the application for ${restaurantName || 'your restaurant'}. Our team will review the details and email you when the review is complete. You can sign in to the restaurant owner portal after approval.`;
+    const sent = await this.deliver(to, subject, html, text);
+    if (!sent) this.logger.warn(`[OWNER REGISTRATION] Verification confirmation email could not be delivered to ${to}.`);
+  }
+
+  async sendRestaurantDecisionEmail(to: string, restaurantName: string, approved: boolean, rejectionReason?: string) {
+    const safeRestaurantName = escapeHtml(restaurantName || 'your restaurant');
+    const safeReason = rejectionReason?.trim() ? escapeHtml(rejectionReason.trim()) : '';
+    const subject = approved
+      ? 'Your SupaMeal restaurant application is approved'
+      : 'An update about your SupaMeal restaurant application';
+    const message = approved
+      ? `Your restaurant <strong>${safeRestaurantName}</strong> has been approved. You can now sign in to the restaurant owner portal.`
+      : `We could not approve the application for <strong>${safeRestaurantName}</strong>${safeReason ? `. Review note: ${safeReason}` : ''}. Please contact support if you need help.`;
+    const html = `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;"><h1 style="color:#f5a623;font-size:22px;">SupaMeal restaurant review</h1><p style="color:#e0e0e0;font-size:15px;line-height:1.6;">${message}</p></div>`;
+    const text = approved
+      ? `Your restaurant ${restaurantName} has been approved. You can now sign in to the restaurant owner portal.`
+      : `We could not approve the application for ${restaurantName}.${safeReason ? ` Review note: ${rejectionReason!.trim()}.` : ''} Please contact support if you need help.`;
+    const sent = await this.deliver(to, subject, html, text);
+    if (!sent) this.logger.warn(`[RESTAURANT REVIEW] Decision email could not be delivered to ${to}.`);
   }
 
   // ── Send password reset email ─────────────────────────────────────────────
@@ -360,7 +408,7 @@ export class MailService implements OnModuleInit {
         $set: { isActive: true },
         $setOnInsert: { email: normalizedEmail, unsubscribeToken: randomUUID() },
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
     ).exec();
 
     const supportEmail = process.env.SUPPORT_EMAIL?.trim()
@@ -405,18 +453,38 @@ export class MailService implements OnModuleInit {
   }
 
   async sendNewsletterUpdate(dto: NewsletterUpdateDto) {
-    if (!this.subscriberModel) {
-      throw new ServiceUnavailableException('Newsletter subscriptions are not available right now.');
+    if (!this.subscriberModel || !this.userModel || !this.notificationModel) {
+      throw new ServiceUnavailableException('Newsletter delivery is not available right now.');
     }
+
+    const subjectText = dto.subject.trim();
+    const messageText = dto.message.trim();
+    const recipients = await this.userModel
+      .find({ role: { $in: [roles.CUSTOMER, roles.OWNER] }, status: UserStatus.ACTIVE })
+      .select('_id')
+      .lean()
+      .exec();
+
+    let inAppSent = 0;
+    for (let start = 0; start < recipients.length; start += 500) {
+      const batch = recipients.slice(start, start + 500);
+      const created = await this.notificationModel.insertMany(batch.map((recipient) => ({
+        userId: recipient._id,
+        title: subjectText,
+        message: messageText,
+        isRead: false,
+      })));
+      inAppSent += created.length;
+    }
+
     const subscribers = await this.subscriberModel.find({ isActive: true })
       .select('email unsubscribeToken')
       .lean()
       .exec();
-    if (!subscribers.length) return { sent: 0, failed: 0, total: 0 };
 
-    const subject = `[SupaMeal Update] ${dto.subject.trim()}`;
-    const safeSubject = escapeHtml(dto.subject.trim());
-    const safeMessage = escapeHtml(dto.message.trim()).replace(/\n/g, '<br />');
+    const subject = `[SupaMeal Update] ${subjectText}`;
+    const safeSubject = escapeHtml(subjectText);
+    const safeMessage = escapeHtml(messageText).replace(/\n/g, '<br />');
     const supportEmail = process.env.SUPPORT_EMAIL?.trim()
       || process.env.SMTP_USER?.trim()
       || 'mugishawitness15@gmail.com';
@@ -428,7 +496,7 @@ export class MailService implements OnModuleInit {
         const unsubscribeUrl = `${(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/newsletter/unsubscribe/${encodeURIComponent(subscriber.unsubscribeToken)}`;
         const safeUrl = escapeHtml(unsubscribeUrl);
         const html = `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:28px;background:#1a1a1a;border:1px solid #333;border-radius:12px;"><h1 style="color:#f5a623;font-size:22px;">SupaMeal Update</h1><h2 style="color:#e0e0e0;font-size:18px;">${safeSubject}</h2><p style="color:#e0e0e0;font-size:15px;line-height:1.7;">${safeMessage}</p><p style="color:#999;font-size:12px;">Questions? <a style="color:#f5a623;" href="mailto:${escapeHtml(supportEmail)}">Contact us</a>. <a style="color:#f5a623;" href="${safeUrl}">Unsubscribe</a></p></div>`;
-        const text = `${dto.subject.trim()}\n\n${dto.message.trim()}\n\nUnsubscribe: ${unsubscribeUrl}`;
+        const text = `${subjectText}\n\n${messageText}\n\nUnsubscribe: ${unsubscribeUrl}`;
         return this.deliver(subscriber.email, subject, html, text);
       }));
       results.push(...batchResults);
@@ -436,10 +504,10 @@ export class MailService implements OnModuleInit {
 
     const sent = results.filter(Boolean).length;
     const failed = results.length - sent;
-    if (sent === 0) {
+    if (sent === 0 && inAppSent === 0 && subscribers.length > 0) {
       throw new ServiceUnavailableException('Newsletter delivery failed. Check the configured email provider and try again.');
     }
     this.logger.log(`Newsletter update delivered to ${sent} of ${results.length} subscribers (${failed} failed).`);
-    return { sent, failed, total: results.length };
+    return { sent, failed, total: results.length, inAppSent };
   }
 }

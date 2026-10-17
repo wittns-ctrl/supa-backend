@@ -88,7 +88,7 @@ export class ReviewsService {
     }
 
     const saved = await this.reviewModel.findByIdAndUpdate(id, updateReviewDto, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!saved) throw new NotFoundException('Review not found');
     await this.updateRestaurantRating(saved.restaurantId.toString());

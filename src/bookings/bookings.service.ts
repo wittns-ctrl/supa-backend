@@ -309,7 +309,7 @@ export class BookingsService {
               ...(updateBookingDto.bookingDate ? { bookingDate: nextDate } : {}),
               guests: nextGuests,
             },
-            { new: true },
+            { returnDocument: 'after' },
           )
           .populate('restaurantId', 'name')
           .populate('customerId', 'name email');
@@ -365,7 +365,7 @@ export class BookingsService {
     const updated = await this.bookingsModel.findByIdAndUpdate(
       id,
       { status: reviewsEnums.CANCELLED },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!updated) throw new NotFoundException('Booking not found');
     return { message: 'Booking cancelled' };

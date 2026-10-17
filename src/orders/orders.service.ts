@@ -100,6 +100,36 @@ export class OrdersService {
       throw new BadRequestException('Invalid customer id');
     }
 
+    const address = dto.deliveryAddress;
+    if (!address) throw new BadRequestException('Delivery address is required');
+    const trimmedAddress = {
+      street: String(address.street || '').trim(),
+      apartment: String(address.apartment || '').trim(),
+      city: String(address.city || '').trim(),
+      postalCode: String(address.postalCode || '').trim(),
+      phone: String(address.phone || '').trim(),
+      instructions: String(address.instructions || '').trim(),
+    };
+    const phoneDigits = trimmedAddress.phone.replace(/\D/g, '');
+    if (
+      trimmedAddress.street.length < 2 || trimmedAddress.street.length > 200 ||
+      !/^[\p{L}\p{N}][\p{L}\p{N}\s,.'#+\/-]{1,199}$/u.test(trimmedAddress.street) ||
+      trimmedAddress.city.length < 2 || trimmedAddress.city.length > 100 ||
+      !/^[\p{L}\p{N}][\p{L}\p{N}\s.'-]{1,99}$/u.test(trimmedAddress.city) ||
+      trimmedAddress.postalCode.length < 2 || trimmedAddress.postalCode.length > 20 ||
+      !/^[A-Za-z0-9][A-Za-z0-9 -]{1,19}$/.test(trimmedAddress.postalCode) ||
+      !/^\+?[0-9][0-9\s().-]{6,18}$/.test(trimmedAddress.phone) ||
+      phoneDigits.length < 8 || phoneDigits.length > 15 ||
+      trimmedAddress.apartment.length > 50 ||
+      trimmedAddress.instructions.length > 300
+    ) {
+      throw new BadRequestException('Please provide a valid delivery address and phone number');
+    }
+    const allowedTimeSlots = ['ASAP (25-35 min)', '12:00 PM', '12:30 PM', '1:00 PM', '7:00 PM', '7:30 PM', '8:00 PM'];
+    if (!dto.timeSlot || !allowedTimeSlots.includes(dto.timeSlot)) {
+      throw new BadRequestException('Please choose a valid delivery time');
+    }
+
     const orderItems: { menuItemId: Types.ObjectId; name: string; qty: number; price: number }[] = [];
     let subtotal = 0;
 
@@ -159,20 +189,17 @@ export class OrdersService {
     const deliveryFee = 3.99;
     const total = Math.max(0, Math.round((subtotal + deliveryFee - discount) * 100) / 100);
 
-    const nowIso = new Date().toISOString();
-    const placedAt = new Date(nowIso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+    const placedAt = new Date().toISOString();
     const timeline = DEFAULT_TIMELINE.map((step, i) => ({
       ...step,
       time: i === 0 ? placedAt : undefined,
       done: i === 0,
     }));
-    void nowIso;
-
     const created = await this.orderModel.create({
       customerId: dto.customerId,
       restaurantId: dto.restaurantId,
       items: orderItems,
-      deliveryAddress: dto.deliveryAddress,
+      deliveryAddress: trimmedAddress,
       timeSlot: dto.timeSlot,
       promoCode: dto.promoCode,
       subtotal,
@@ -392,14 +419,14 @@ export class OrdersService {
       );
     }
 
-    const timeline = this.buildTimelineForStatus(status);
+    const timeline = this.buildTimelineForStatus(status, populated.timeline);
     // Optimistic concurrency: the update only matches if the status is still
     // what we validated above — two concurrent transitions can't both win.
     const updated = await this.orderModel
       .findOneAndUpdate(
         { _id: id, status: populated.status },
         { status, timeline, eta: this.getEta(status) },
-        { new: true },
+        { returnDocument: 'after' },
       )
       .populate('customerId', 'name');
 
@@ -414,14 +441,13 @@ export class OrdersService {
         ? (updated.customerId as { _id: Types.ObjectId })._id.toString()
         : String(updated.customerId);
 
-    // Any state past PENDING means payment already succeeded (fake or Stripe),
-    // so cancelling it must return the money. A refund failure must not block
-    // the cancellation — the record stays for manual reconciliation.
+    // Cancelling or rejecting an order that was paid must return the money.
+    // A refund failure must not block the state change; report it for review.
     let refundWarning: string | undefined;
-    if (status === OrderStatus.CANCELLED && populated.status !== OrderStatus.PENDING) {
+    if (status === OrderStatus.CANCELLED || status === OrderStatus.REJECTED) {
       const refund = await this.paymentsService.refundOrderPayment(id);
-      if (!refund.refunded && refund.reason) {
-        refundWarning = `Order cancelled but refund could not be completed automatically: ${refund.reason}`;
+      if (!refund.refunded && refund.reason && refund.reason !== 'no paid payment found') {
+        refundWarning = `Order ${status} but refund could not be completed automatically: ${refund.reason}`;
         this.logger.warn(refundWarning);
       }
     }
@@ -482,7 +508,10 @@ export class OrdersService {
     return { message: 'Order removed from your history' };
   }
 
-  private buildTimelineForStatus(status: OrderStatus) {
+  private buildTimelineForStatus(
+    status: OrderStatus,
+    existingTimeline: orderDocument['timeline'] = [],
+  ) {
     const statusToStep: Record<string, number> = {
       pending: 0,
       accepted: 1,
@@ -494,11 +523,14 @@ export class OrdersService {
       rejected: 0,
     };
     const activeIndex = statusToStep[status] ?? 0;
+    const now = new Date().toISOString();
     return DEFAULT_TIMELINE.map((step, i) => ({
       ...step,
       done: i <= activeIndex,
+      // Preserve the timestamp when a step first completed. Statuses such as
+      // READY share the Preparing timeline step, so its original time remains.
       time: i <= activeIndex
-        ? new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+        ? existingTimeline?.find((previous) => previous.key === step.key)?.time || now
         : undefined,
     }));
   }

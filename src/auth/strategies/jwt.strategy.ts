@@ -47,7 +47,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (user.accountType === 'admin') roles.add('admin');
     if (user.accountType === 'owner') {
       for (const membership of user.restaurantMemberships || []) {
-        if (membership.status === 'active') roles.add(membership.role);
+        // Pending or rejected owners can access their private restaurant
+        // portal to review/update their application. Public endpoints enforce
+        // approval separately before publishing anything.
+        if (membership.status === 'active' || membership.status === 'pending' || membership.status === 'rejected') {
+          roles.add(membership.role);
+        }
       }
     }
     const effectiveRole = roles.has(user.role) ? user.role : [...roles][0] || '';

@@ -183,14 +183,10 @@ export class PaymentsService {
       metadata: { ...metadata, fake: 'true' },
     });
 
-    order.status = OrderStatus.ACCEPTED;
-    order.markModified('status');
-    await order.save();
-
     await this.notificationsService.create({
       userId: customer.toString(),
       title: 'Payment confirmed (dev mode)',
-      message: `Your order ${order.id} has been paid ($${amount.toFixed(2)}).`,
+      message: `Your order ${order.id} has been paid ($${amount.toFixed(2)}) and is awaiting restaurant acceptance.`,
     });
 
     return {
@@ -267,12 +263,8 @@ export class PaymentsService {
       { upsert: false },
     );
 
-    // Idempotency + state guard: a webhook can arrive after the client already
-    // confirmed (duplicate notification) or after the customer cancelled the
-    // order (payment would resurrect a dead order). Only move PENDING →
-    // ACCEPTED; already-paid orders stay untouched, and any terminal state
-    // (cancelled/rejected/delivered) is rejected loudly.
-    const alreadyPaid = order.status === OrderStatus.ACCEPTED;
+    // Idempotency + state guard: payment confirmation must not accept the
+    // order. The restaurant owner performs that explicit transition.
     if (
       order.status !== OrderStatus.PENDING &&
       order.status !== OrderStatus.ACCEPTED
@@ -288,21 +280,16 @@ export class PaymentsService {
       };
     }
 
-    if (!alreadyPaid) {
-      order.status = OrderStatus.ACCEPTED;
-      await order.save();
-
-      const customerId = order.customerId?.toString();
-      if (customerId) {
-        await this.notificationsService.create({
-          userId: customerId,
-          title: 'Payment confirmed',
-          message: `Your order ${order.id} has been paid. The restaurant will prepare it soon.`,
-        });
-      }
+    const customerId = order.customerId?.toString();
+    if (customerId) {
+      await this.notificationsService.create({
+        userId: customerId,
+        title: 'Payment confirmed',
+        message: `Your order ${order.id} has been paid and is awaiting restaurant acceptance.`,
+      });
     }
 
-    return { orderId: order.id, status: OrderStatus.ACCEPTED, amount };
+    return { orderId: order.id, status: order.status, amount };
   }
 
   /**

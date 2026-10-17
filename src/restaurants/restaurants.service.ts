@@ -24,7 +24,9 @@ export function escapeRegExp(input: string): string {
 }
 import { order, orderDocument } from 'src/orders/schema/order.schema';
 import { bookings, bookingsDocument } from 'src/bookings/schema/bookings.schema';
+import { payment, paymentDocument, Payments } from 'src/payments/schema/payments.schema';
 import { menu, menuDocument } from 'src/menus/schema/menu.schema';
+import { MailService } from 'src/mail/mail.service';
 
 @Injectable()
 export class RestaurantsService {
@@ -37,8 +39,11 @@ export class RestaurantsService {
     private readonly orderModel: Model<orderDocument>,
     @InjectModel(bookings.name)
     private readonly bookingsModel: Model<bookingsDocument>,
+    @InjectModel(payment.name)
+    private readonly paymentModel: Model<paymentDocument>,
     @InjectModel(menu.name)
     private readonly menuModel: Model<menuDocument>,
+    private readonly mailService: MailService,
   ) {}
 
   async createRestaurant(createRestdto: CreateRestaurantDto) {
@@ -113,10 +118,10 @@ export class RestaurantsService {
     location?: string;
     rating?: string;
     approvedOnly?: string;
-  }) {
+  }, includeUnapproved = false) {
     const filter: Record<string, unknown> = {};
 
-    if (query.approvedOnly !== 'false') {
+    if (!includeUnapproved) {
       filter.status = RestaurantStatus.ACTIVE;
       filter.isApproved = true;
     }
@@ -162,8 +167,32 @@ export class RestaurantsService {
       .findById(id)
       .populate('ownerId', 'name email phone');
 
-    if (!found) throw new NotFoundException('Restaurant not found');
+    if (!found || found.status !== RestaurantStatus.ACTIVE || !found.isApproved) {
+      throw new NotFoundException('Restaurant not found');
+    }
 
+    const menuItems = await this.menuModel.find({ restaurant: id });
+    return {
+      ...this.formatRestaurant(found),
+      menu: menuItems.map((m) => this.formatMenuItem(m)),
+    };
+  }
+
+  async findOneForOwner(id: string, userId: string, userRole?: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid restaurant id');
+    }
+    const found = await this.restaurantModel
+      .findById(id)
+      .populate('ownerId', 'name email phone');
+    if (!found) throw new NotFoundException('Restaurant not found');
+    const owner = found.ownerId as unknown as { _id?: Types.ObjectId } | Types.ObjectId;
+    const ownerId = owner && typeof owner === 'object' && '_id' in owner
+      ? owner._id?.toString()
+      : owner?.toString?.();
+    if (userRole !== roles.ADMIN && ownerId !== userId) {
+      throw new UnauthorizedException('You are not authorized to view this restaurant');
+    }
     const menuItems = await this.menuModel.find({ restaurant: id });
     return {
       ...this.formatRestaurant(found),
@@ -182,7 +211,7 @@ export class RestaurantsService {
     this.assertOwnerOrAdmin(existing.ownerId, userId, userRole);
 
     const updated = await this.restaurantModel
-      .findByIdAndUpdate(id, updateRestaurantDto, { new: true })
+      .findByIdAndUpdate(id, updateRestaurantDto, { returnDocument: 'after' })
       .populate('ownerId', 'name email');
 
     if (!updated) throw new NotFoundException('Restaurant not found');
@@ -203,7 +232,7 @@ export class RestaurantsService {
     const updated = await this.restaurantModel.findByIdAndUpdate(
       id,
       { $push: { images: { $each: images } } },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!updated) throw new NotFoundException('Restaurant not found');
     return this.formatRestaurant(updated);
@@ -217,7 +246,7 @@ export class RestaurantsService {
     const updated = await this.restaurantModel.findByIdAndUpdate(
       id,
       { $pull: { images: imageUrl } },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!updated) throw new NotFoundException('Restaurant not found');
     return this.formatRestaurant(updated);
@@ -229,7 +258,7 @@ export class RestaurantsService {
       status: approved ? RestaurantStatus.ACTIVE : RestaurantStatus.REJECTED,
     };
     const updated = await this.restaurantModel.findByIdAndUpdate(id, update, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!updated) throw new NotFoundException('Restaurant not found');
     const owner = await this.userModel.findById(updated.ownerId);
@@ -250,6 +279,12 @@ export class RestaurantsService {
         } as any);
       }
       await owner.save();
+      await this.mailService.sendRestaurantDecisionEmail(
+        owner.email,
+        updated.name,
+        approved,
+        rejectionReason,
+      );
     }
     return this.formatRestaurant(updated);
   }
@@ -260,7 +295,7 @@ export class RestaurantsService {
     if (status === RestaurantStatus.SUSPENDED) update.isApproved = false;
 
     const updated = await this.restaurantModel.findByIdAndUpdate(id, update, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!updated) throw new NotFoundException('Restaurant not found');
     const owner = await this.userModel.findById(updated.ownerId);
@@ -290,16 +325,53 @@ export class RestaurantsService {
     this.assertOwnerOrAdmin(restaurant.ownerId, userId, userRole);
 
     const restaurantId = new Types.ObjectId(id);
-    const orders = await this.orderModel.find({ restaurantId });
-    const bookings = await this.bookingsModel.find({ restaurantId });
+    const [orders, bookings] = await Promise.all([
+      this.orderModel.find({ restaurantId }).exec(),
+      this.bookingsModel.find({ restaurantId }).exec(),
+    ]);
     const revenue = orders
       .filter((o) => o.status === 'delivered')
       .reduce((sum, o) => sum + Number(o.total || 0), 0);
+
+    const todayParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Kigali',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const today = Object.fromEntries(todayParts.map(({ type, value }) => [type, value]));
+    const kigaliDate = `${today.year}-${today.month}-${today.day}`;
+    const startOfToday = new Date(`${kigaliDate}T00:00:00+02:00`);
+    const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+    const orderIds = orders.map((order) => order._id);
+    const paymentWindow = { $gte: startOfToday, $lt: startOfTomorrow };
+    const [paymentsReceivedToday, refundsProcessedToday] = orderIds.length
+      ? await Promise.all([
+          this.paymentModel.find({
+            orderId: { $in: orderIds },
+            status: Payments.PAID,
+            updatedAt: paymentWindow,
+          }).select('amount').lean().exec(),
+          this.paymentModel.find({
+            orderId: { $in: orderIds },
+            status: Payments.REFUNDED,
+            updatedAt: paymentWindow,
+          }).select('amount').lean().exec(),
+        ])
+      : [[], []];
+    const todayRevenue = paymentsReceivedToday.reduce(
+      (sum, currentPayment) => sum + Number(currentPayment.amount || 0),
+      0,
+    ) - refundsProcessedToday.reduce(
+      (sum, currentPayment) => sum + Number(currentPayment.amount || 0),
+      0,
+    );
 
     return {
       totalOrders: orders.length,
       totalBookings: bookings.length,
       revenue: Math.round(revenue * 100) / 100,
+      todayRevenue: Math.round(Math.max(0, todayRevenue) * 100) / 100,
       rating: restaurant.rating || 0,
       pendingOrders: orders.filter((o) => o.status === 'pending').length,
     };
@@ -317,22 +389,30 @@ export class RestaurantsService {
 
     const days = period === 'month' ? 30 : 7;
     const restaurantId = new Types.ObjectId(id);
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days + 1);
-    startDate.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const dateParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Kigali', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(now).reduce<Record<string, string>>((parts, part) => {
+      parts[part.type] = part.value;
+      return parts;
+    }, {});
+    const startDate = new Date(Date.UTC(
+      Number(dateParts.year), Number(dateParts.month) - 1,
+      Number(dateParts.day) - days + 1, -2,
+    ));
 
     const pipeline: any[] = [
       {
         $match: {
           restaurantId,
           status: 'delivered',
-          createdAt: { $gte: startDate },
+          updatedAt: { $gte: startDate, $lte: now },
         },
       },
       {
         $group: {
           _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+            $dateToString: { format: '%Y-%m-%d', date: '$updatedAt', timezone: 'Africa/Kigali' },
           },
           total: { $sum: { $toDouble: '$total' } },
         },
@@ -346,21 +426,18 @@ export class RestaurantsService {
       byDate[r._id] = Number(r.total) || 0;
     }
 
-    const labels = period === 'month'
-      ? Array.from({ length: days }, (_, i) => {
-          const d = new Date(startDate);
-          d.setDate(d.getDate() + i);
-          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        })
-      : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
     const data = Array.from({ length: days }, (_, i) => {
-      const d = new Date(startDate);
-      d.setDate(d.getDate() + i);
+      const d = new Date(Date.UTC(
+        Number(dateParts.year), Number(dateParts.month) - 1,
+        Number(dateParts.day) - days + 1 + i,
+      ));
       const key = d.toISOString().slice(0, 10);
       const raw = byDate[key] || 0;
+      const label = period === 'month'
+        ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+        : d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
       return {
-        label: period === 'month' ? labels[i] : labels[(d.getDay() + 6) % 7],
+        label,
         value: Math.round(raw * 100) / 100,
       };
     });
@@ -392,12 +469,11 @@ export class RestaurantsService {
       },
       {
         $group: {
-          _id: { $hour: '$createdAt' },
+          _id: { $hour: { date: '$createdAt', timezone: 'Africa/Kigali' } },
           count: { $sum: 1 },
         },
       },
-      { $sort: { count: -1 } },
-      { $limit: 6 },
+      { $sort: { _id: 1 } },
     ];
 
     const hourData = await this.orderModel.aggregate(orderPipeline).exec();
@@ -409,19 +485,11 @@ export class RestaurantsService {
       return `${h - 12} PM`;
     };
 
-    const result = hourData
-      .map((r) => ({ hour: formatHour(r._id), count: Number(r.count || 0) }))
-      .filter((r) => r.count > 0);
-
-    if (result.length === 0) {
-      return [
-        { hour: '11 AM', count: 0 },
-        { hour: '12 PM', count: 0 },
-        { hour: '6 PM', count: 0 },
-        { hour: '7 PM', count: 0 },
-      ];
-    }
-    return result;
+    const counts = new Map<number, number>(hourData.map((r) => [r._id, Number(r.count || 0)]));
+    return Array.from({ length: 24 }, (_, hour) => ({
+      hour: formatHour(hour),
+      count: counts.get(hour) || 0,
+    }));
   }
 
   private assertOwnerOrAdmin(

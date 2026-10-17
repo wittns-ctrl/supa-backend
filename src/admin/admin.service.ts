@@ -5,6 +5,7 @@ import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurant
 import { User, UserDocument, roles, UserStatus } from 'src/users/schema/user.schema';
 import { order, orderDocument, OrderStatus } from 'src/orders/schema/order.schema';
 import { bookings, bookingsDocument } from 'src/bookings/schema/bookings.schema';
+import { review, reviewDocument } from 'src/reviews/schema/review.schema';
 import {
   PlatformSettings,
   PlatformSettingsDocument,
@@ -17,11 +18,10 @@ const ALLOWED_SETTINGS_FIELDS = [
   'allowNewRegistrations',
   'defaultDeliveryFee',
   'commissionRate',
+  'maxRestaurantsPerOwner',
 ] as const;
 
 const ALLOWED_MAINTENANCE_ACTIONS = new Set([
-  'clear-cache',
-  'reindex-search',
   'recalculate-ratings',
 ]);
 
@@ -32,6 +32,7 @@ export class AdminService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(order.name) private orderModel: Model<orderDocument>,
     @InjectModel(bookings.name) private bookingsModel: Model<bookingsDocument>,
+    @InjectModel(review.name) private reviewModel: Model<reviewDocument>,
     @InjectModel(PlatformSettings.name)
     private settingsModel: Model<PlatformSettingsDocument>,
   ) {}
@@ -198,7 +199,7 @@ export class AdminService {
     if (!settings) {
       settings = await this.settingsModel.create(patch);
     } else {
-      settings = await this.settingsModel.findOneAndUpdate({}, patch, { new: true });
+      settings = await this.settingsModel.findOneAndUpdate({}, patch, { returnDocument: 'after' });
     }
     return settings;
   }
@@ -211,22 +212,30 @@ export class AdminService {
       );
     }
 
-    let affected = 0;
-    if (action === 'recalculate-ratings') {
-      // Delegate to review aggregation via direct update would need the review
-      // model; count restaurants so the response is informative.
-      affected = await this.restaurantModel.countDocuments();
-    } else if (action === 'clear-cache') {
-      affected = 0;
-    } else if (action === 'reindex-search') {
-      affected = await this.restaurantModel.countDocuments();
+    const ratings = await this.reviewModel.aggregate<{
+      _id: Types.ObjectId;
+      averageRating: number;
+      reviewCount: number;
+    }>([
+      { $group: { _id: '$restaurantId', averageRating: { $avg: '$rating' }, reviewCount: { $sum: 1 } } },
+    ]).exec();
+
+    await this.restaurantModel.updateMany({}, { $set: { rating: 0, reviewCount: 0 } });
+    if (ratings.length) {
+      await this.restaurantModel.bulkWrite(ratings.map((entry) => ({
+        updateOne: {
+          filter: { _id: entry._id },
+          update: { $set: { rating: Math.round(entry.averageRating * 10) / 10, reviewCount: entry.reviewCount } },
+        },
+      })));
     }
+    const affected = ratings.length;
 
     return {
       action,
       status: 'completed',
       affected,
-      message: `${action} completed successfully`,
+      message: `Recalculated ratings for ${affected} restaurants`,
       timestamp: new Date().toISOString(),
     };
   }

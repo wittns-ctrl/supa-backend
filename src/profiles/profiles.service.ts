@@ -44,7 +44,7 @@ export class ProfilesService {
     if (dto.phone) update.phone = dto.phone;
 
     const user = await this.userModel
-      .findByIdAndUpdate(userId, update, { new: true })
+      .findByIdAndUpdate(userId, update, { returnDocument: 'after' })
       .select('-password -refreshToken');
     if (!user) throw new NotFoundException('Profile not found');
     return sanitizeUser(user);

@@ -6,6 +6,8 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsIn,
+  Matches,
   ArrayMaxSize,
   ArrayMinSize,
   MaxLength,
@@ -26,9 +28,10 @@ export class OrderItemDto {
 }
 
 export class DeliveryAddressDto {
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(200)
+  @Matches(/^[\p{L}\p{N}][\p{L}\p{N}\s,.'#+\/-]{1,199}$/u)
   street?: string;
 
   @IsOptional()
@@ -36,15 +39,23 @@ export class DeliveryAddressDto {
   @MaxLength(50)
   apartment?: string;
 
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(100)
+  @Matches(/^[\p{L}\p{N}][\p{L}\p{N}\s.'-]{1,99}$/u)
   city?: string;
 
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(20)
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9 -]{1,19}$/)
   postalCode?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(24)
+  @Matches(/^\+?[0-9][0-9\s().-]{6,18}$/)
+  phone?: string;
 
   @IsOptional()
   @IsString()
@@ -68,14 +79,14 @@ export class CreateOrderDto {
   @Type(() => OrderItemDto)
   items!: OrderItemDto[];
 
-  @IsOptional()
   @IsObject()
   @ValidateNested()
   @Type(() => DeliveryAddressDto)
   deliveryAddress?: DeliveryAddressDto;
 
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @IsIn(['ASAP (25-35 min)', '12:00 PM', '12:30 PM', '1:00 PM', '7:00 PM', '7:30 PM', '8:00 PM'])
   @MaxLength(50)
   timeSlot?: string;
 

@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { AuthAccountType, RestaurantMembershipStatus, User, UserDocument, roles } from 'src/users/schema/user.schema';
+import { AuthAccountType, RestaurantMembershipStatus, User, UserDocument, UserStatus, roles } from 'src/users/schema/user.schema';
 import {
   restaurant,
   restaurantDocument,
@@ -21,9 +21,8 @@ export class SeedService implements OnModuleInit {
   ) {}
 
   /**
-   * Demo seeding is dangerous in production: it creates known admin/owner/
-   * customer accounts with a hardcoded password. It is now opt-in via
-   * SEED_DEMO_DATA=true AND hard-disabled whenever NODE_ENV=production.
+   * Demo seeding is opt-in via SEED_DEMO_DATA=true and hard-disabled in
+   * production. Admin credentials are supplied through the local environment.
    */
   async onModuleInit() {
     const env = (process.env.NODE_ENV || 'development').toLowerCase();
@@ -36,8 +35,12 @@ export class SeedService implements OnModuleInit {
       }
       return;
     }
+    if (process.env.DEMO_ADMIN_EMAIL && process.env.DEMO_ADMIN_PASSWORD) {
+      await this.ensureDemoAdmin();
+    }
+
     if (!explicitlyEnabled) {
-      this.logger.log('Demo seeding skipped (set SEED_DEMO_DATA=true to enable in non-production environments).');
+      this.logger.log('Demo data seeding skipped (set SEED_DEMO_DATA=true to enable in non-production environments).');
       return;
     }
 
@@ -46,21 +49,42 @@ export class SeedService implements OnModuleInit {
     await this.seed();
   }
 
+  private async ensureDemoAdmin() {
+    const email = process.env.DEMO_ADMIN_EMAIL?.trim().toLowerCase();
+    const password = process.env.DEMO_ADMIN_PASSWORD;
+    if (!email || !password) {
+      this.logger.warn('Demo admin was not created: set DEMO_ADMIN_EMAIL and DEMO_ADMIN_PASSWORD.');
+      return;
+    }
+
+    const existing = await this.userModel.findOne({ email, accountType: AuthAccountType.ADMIN });
+    if (existing) {
+      existing.password = await bcrypt.hash(password, 12);
+      existing.role = roles.ADMIN;
+      existing.isVerified = true;
+      existing.status = UserStatus.ACTIVE;
+      await existing.save();
+      this.logger.log('Configured demo admin credentials synchronized.');
+      return;
+    }
+
+    await this.userModel.create({
+      name: 'Admin User',
+      email,
+      password: await bcrypt.hash(password, 12),
+      phone: '1000000001',
+      role: roles.ADMIN,
+      accountType: AuthAccountType.ADMIN,
+      isVerified: true,
+      status: UserStatus.ACTIVE,
+      restaurantMemberships: [],
+      authSessions: [],
+    });
+    this.logger.log('Configured demo admin account created.');
+  }
+
   async seed() {
     const password = await bcrypt.hash('Password123!', 10);
-
-    let admin = await this.userModel.findOne({ email: 'admin@supameal.com', accountType: AuthAccountType.ADMIN });
-    if (!admin) {
-      admin = await this.userModel.create({
-        name: 'Admin User',
-        email: 'admin@supameal.com',
-        password,
-        phone: '1000000001',
-        role: roles.ADMIN,
-        accountType: AuthAccountType.ADMIN,
-        isVerified: true,
-      });
-    }
 
     let owner = await this.userModel.findOne({ email: 'maria@goldenplate.com', accountType: AuthAccountType.OWNER });
     if (!owner) {
@@ -158,8 +182,7 @@ export class SeedService implements OnModuleInit {
     await owner.save();
 
     this.logger.log('Database seeded with demo data');
-    this.logger.log('Demo accounts (password: Password123!):');
-    this.logger.log('  admin@supameal.com (admin)');
+    this.logger.log('Demo owner and customer accounts (password: Password123!):');
     this.logger.log('  maria@goldenplate.com (owner)');
     this.logger.log('  alex@supameal.com (customer)');
   }

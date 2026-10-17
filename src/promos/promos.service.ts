@@ -71,7 +71,7 @@ export class PromosService {
     if (dto.expiresAt) patch.expiresAt = new Date(dto.expiresAt);
 
     const updated = await this.promoModel.findByIdAndUpdate(id, patch, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!updated) throw new NotFoundException('Promo not found');
     return this.format(updated);

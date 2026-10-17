@@ -215,7 +215,7 @@ export class AuthService {
       user.restaurantMemberships = memberships as any;
       await user.save();
     }
-    await this.mailservice.sendOtpEmail(email, otp);
+    await this.mailservice.sendOtpEmail(email, otp, 'owner');
     return { message: 'If this email can be registered, a verification code has been sent.' };
   }
 
@@ -264,6 +264,19 @@ export class AuthService {
     user.isVerified = true;
 
     await user.save();
+
+    if (accountType === AuthAccountType.OWNER) {
+      try {
+        const restaurant = await this.restaurantModel.findOne({ ownerId: user._id }).sort({ createdAt: -1 });
+        await this.mailservice.sendOwnerVerificationCompleteEmail(
+          user.email,
+          user.name,
+          restaurant?.name || 'your restaurant',
+        );
+      } catch (error) {
+        this.logger.warn(`Owner verification succeeded but the confirmation email could not be prepared: ${error.message}`);
+      }
+    }
 
     const tokens = await this.generateTokens(user);
     return {
@@ -328,7 +341,11 @@ export class AuthService {
     user.emailVerificationOtpAttempts = 0;
     await user.save();
 
-    await this.mailservice.sendOtpEmail(normalized, otp);
+    await this.mailservice.sendOtpEmail(
+      normalized,
+      otp,
+      accountType === AuthAccountType.OWNER ? 'owner' : 'customer',
+    );
     return { message: 'If an unverified account exists, a new code has been sent.' };
   }
 

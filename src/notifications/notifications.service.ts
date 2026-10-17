@@ -64,19 +64,19 @@ export class NotificationsService {
   }
 
   async update(id: string, dto: UpdateNotificationDto) {
-    const updated = await this.notificationModel.findByIdAndUpdate(id, dto, { new: true });
+    const updated = await this.notificationModel.findByIdAndUpdate(id, dto, { returnDocument: 'after' });
     if (!updated) throw new NotFoundException('Notification not found');
     return this.format(updated);
   }
 
-  async remove(id: string, userId: string) {
+  async remove(id: string, userId: string, userRole: string) {
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('Notification not found');
     }
     const deleted = await this.notificationModel.findById(id);
     if (!deleted) throw new NotFoundException('Notification not found');
 
-    if (deleted.userId.toString() !== userId) {
+    if (userRole !== roles.ADMIN && deleted.userId.toString() !== userId) {
       throw new UnauthorizedException('You are not authorized to delete this notification');
     }
 

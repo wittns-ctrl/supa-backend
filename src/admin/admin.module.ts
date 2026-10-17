@@ -6,6 +6,7 @@ import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.
 import { User, Userschema } from 'src/users/schema/user.schema';
 import { order, orderSchema } from 'src/orders/schema/order.schema';
 import { bookings, bookingschema } from 'src/bookings/schema/bookings.schema';
+import { review, reviewschema } from 'src/reviews/schema/review.schema';
 import {
   PlatformSettings,
   PlatformSettingsSchema,
@@ -19,6 +20,7 @@ import { AuthModule } from 'src/auth/auth.module';
       { name: User.name, schema: Userschema },
       { name: order.name, schema: orderSchema },
       { name: bookings.name, schema: bookingschema },
+      { name: review.name, schema: reviewschema },
       { name: PlatformSettings.name, schema: PlatformSettingsSchema },
     ]),
     AuthModule,

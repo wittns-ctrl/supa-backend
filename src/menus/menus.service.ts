@@ -3,7 +3,7 @@ import { CreateMenuDto } from './dto/create-menu.dto';
 import { UpdateMenuDto } from './dto/update-menu.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { menu, menuDocument } from './schema/menu.schema';
-import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
+import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurants/schema/restaurant.schema';
 import { Model, Types } from 'mongoose';
 import { roles } from 'src/users/schema/user.schema';
 
@@ -56,13 +56,31 @@ export class MenusService {
 
   async findAll(restaurantId?: string) {
     const filter: Record<string, unknown> = {};
+    const approvedRestaurants = await this.restaurantModel
+      .find({ isApproved: true, status: RestaurantStatus.ACTIVE })
+      .select('_id')
+      .lean()
+      .exec();
+    const approvedRestaurantIds = approvedRestaurants.map((restaurant) => restaurant._id);
     if (restaurantId) {
       if (!Types.ObjectId.isValid(restaurantId)) {
         throw new BadRequestException('Invalid restaurant id');
       }
+      if (!approvedRestaurantIds.some((id) => id.toString() === restaurantId)) return [];
       filter.restaurant = restaurantId;
+    } else {
+      filter.restaurant = { $in: approvedRestaurantIds };
     }
     const items = await this.menuModel.find(filter).sort({ category: 1 });
+    return items.map((m) => this.formatMenu(m));
+  }
+
+  async findAllForOwner(restaurantId: string, userId: string, userRole?: string) {
+    if (!Types.ObjectId.isValid(restaurantId)) {
+      throw new BadRequestException('Invalid restaurant id');
+    }
+    await this.assertRestaurantOwner(restaurantId, userId, userRole);
+    const items = await this.menuModel.find({ restaurant: restaurantId }).sort({ category: 1 });
     return items.map((m) => this.formatMenu(m));
   }
 
@@ -72,6 +90,12 @@ export class MenusService {
     }
     const item = await this.menuModel.findById(id);
     if (!item) throw new NotFoundException('Menu item not found');
+    const restaurant = await this.restaurantModel.findOne({
+      _id: item.restaurant,
+      isApproved: true,
+      status: RestaurantStatus.ACTIVE,
+    }).select('_id').exec();
+    if (!restaurant) throw new NotFoundException('Menu item not found');
     return this.formatMenu(item);
   }
 
@@ -80,7 +104,7 @@ export class MenusService {
     if (!existing) throw new NotFoundException('Menu item not found');
     await this.assertRestaurantOwner(existing.restaurant, userId, userRole);
     const updated = await this.menuModel.findByIdAndUpdate(id, updateMenuDto, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!updated) throw new NotFoundException('Menu item not found');
     return this.formatMenu(updated);

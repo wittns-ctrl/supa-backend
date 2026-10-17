@@ -35,6 +35,8 @@ export class OrderDeliveryAddress {
   @Prop()
   postalCode?: string;
   @Prop()
+  phone?: string;
+  @Prop()
   instructions?: string;
 }
 
