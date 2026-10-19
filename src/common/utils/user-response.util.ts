@@ -3,6 +3,7 @@ import { UserDocument } from 'src/users/schema/user.schema';
 export function sanitizeUser(user: UserDocument) {
   const obj = user.toObject();
   delete obj.password;
+  delete obj.isPrimaryAdmin;
   delete obj.refreshToken;
   delete obj.previousRefreshToken;
   delete obj.previousRefreshTokenExpiresAt;

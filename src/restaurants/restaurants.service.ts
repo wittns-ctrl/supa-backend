@@ -118,6 +118,8 @@ export class RestaurantsService {
     location?: string;
     rating?: string;
     approvedOnly?: string;
+    page?: string;
+    limit?: string;
   }, includeUnapproved = false) {
     const filter: Record<string, unknown> = {};
 
@@ -150,12 +152,24 @@ export class RestaurantsService {
       }
     }
 
-    const restaurants = await this.restaurantModel
+    const requestedPage = query.page !== undefined || query.limit !== undefined;
+    const page = Math.max(parseInt(query.page || '1', 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(query.limit || (requestedPage ? '20' : '50'), 10) || 50, 1), 100);
+    const [restaurants, total] = await Promise.all([
+      this.restaurantModel
       .find(filter)
       .populate('ownerId', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .exec(),
+      requestedPage ? this.restaurantModel.countDocuments(filter).exec() : Promise.resolve(0),
+    ]);
 
-    return restaurants.map((r) => this.formatRestaurant(r));
+    const data = restaurants.map((r) => this.formatRestaurant(r));
+    return requestedPage
+      ? { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+      : data;
   }
 
   async findOne(id: string) {
@@ -171,7 +185,7 @@ export class RestaurantsService {
       throw new NotFoundException('Restaurant not found');
     }
 
-    const menuItems = await this.menuModel.find({ restaurant: id });
+    const menuItems = await this.menuModel.find({ restaurant: id }).sort({ category: 1, _id: 1 }).limit(100).exec();
     return {
       ...this.formatRestaurant(found),
       menu: menuItems.map((m) => this.formatMenuItem(m)),
@@ -193,7 +207,7 @@ export class RestaurantsService {
     if (userRole !== roles.ADMIN && ownerId !== userId) {
       throw new UnauthorizedException('You are not authorized to view this restaurant');
     }
-    const menuItems = await this.menuModel.find({ restaurant: id });
+    const menuItems = await this.menuModel.find({ restaurant: id }).sort({ category: 1, _id: 1 }).limit(100).exec();
     return {
       ...this.formatRestaurant(found),
       menu: menuItems.map((m) => this.formatMenuItem(m)),
@@ -325,13 +339,22 @@ export class RestaurantsService {
     this.assertOwnerOrAdmin(restaurant.ownerId, userId, userRole);
 
     const restaurantId = new Types.ObjectId(id);
-    const [orders, bookings] = await Promise.all([
-      this.orderModel.find({ restaurantId }).exec(),
-      this.bookingsModel.find({ restaurantId }).exec(),
+    const [orderSummary, totalBookings] = await Promise.all([
+      this.orderModel.aggregate([
+        { $match: { restaurantId } },
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            revenue: {
+              $sum: { $cond: [{ $eq: ['$status', 'delivered'] }, { $toDouble: '$total' }, 0] },
+            },
+            pendingOrders: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+          },
+        },
+      ]).exec(),
+      this.bookingsModel.countDocuments({ restaurantId }).exec(),
     ]);
-    const revenue = orders
-      .filter((o) => o.status === 'delivered')
-      .reduce((sum, o) => sum + Number(o.total || 0), 0);
 
     const todayParts = new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Africa/Kigali',
@@ -343,37 +366,33 @@ export class RestaurantsService {
     const kigaliDate = `${today.year}-${today.month}-${today.day}`;
     const startOfToday = new Date(`${kigaliDate}T00:00:00+02:00`);
     const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
-    const orderIds = orders.map((order) => order._id);
     const paymentWindow = { $gte: startOfToday, $lt: startOfTomorrow };
-    const [paymentsReceivedToday, refundsProcessedToday] = orderIds.length
-      ? await Promise.all([
-          this.paymentModel.find({
-            orderId: { $in: orderIds },
-            status: Payments.PAID,
-            updatedAt: paymentWindow,
-          }).select('amount').lean().exec(),
-          this.paymentModel.find({
-            orderId: { $in: orderIds },
-            status: Payments.REFUNDED,
-            updatedAt: paymentWindow,
-          }).select('amount').lean().exec(),
-        ])
-      : [[], []];
-    const todayRevenue = paymentsReceivedToday.reduce(
-      (sum, currentPayment) => sum + Number(currentPayment.amount || 0),
-      0,
-    ) - refundsProcessedToday.reduce(
-      (sum, currentPayment) => sum + Number(currentPayment.amount || 0),
-      0,
-    );
+    const paymentSummary = await this.paymentModel.aggregate([
+      { $match: { status: { $in: [Payments.PAID, Payments.REFUNDED] }, updatedAt: paymentWindow } },
+      {
+        $lookup: {
+          from: this.orderModel.collection.name,
+          localField: 'orderId',
+          foreignField: '_id',
+          as: 'order',
+        },
+      },
+      { $unwind: '$order' },
+      { $match: { 'order.restaurantId': restaurantId } },
+      { $group: { _id: '$status', amount: { $sum: { $toDouble: '$amount' } } } },
+    ]).exec();
+    const todayPaid = paymentSummary.find((entry) => entry._id === Payments.PAID)?.amount || 0;
+    const todayRefunded = paymentSummary.find((entry) => entry._id === Payments.REFUNDED)?.amount || 0;
+    const todayRevenue = Number(todayPaid) - Number(todayRefunded);
+    const summary = orderSummary[0] || { totalOrders: 0, revenue: 0, pendingOrders: 0 };
 
     return {
-      totalOrders: orders.length,
-      totalBookings: bookings.length,
-      revenue: Math.round(revenue * 100) / 100,
+      totalOrders: Number(summary.totalOrders || 0),
+      totalBookings,
+      revenue: Math.round(Number(summary.revenue || 0) * 100) / 100,
       todayRevenue: Math.round(Math.max(0, todayRevenue) * 100) / 100,
       rating: restaurant.rating || 0,
-      pendingOrders: orders.filter((o) => o.status === 'pending').length,
+      pendingOrders: Number(summary.pendingOrders || 0),
     };
   }
 
@@ -523,10 +542,8 @@ export class RestaurantsService {
       rating: obj.rating,
       reviews: obj.reviewCount,
       deliveryTime: '25-40 min',
-      priceRange: '$$',
       image: obj.images?.[0] || '',
       images: obj.images,
-      isPromo: false,
       ownerId: rawOwnerId,
       owner: ownerData?.name || 'Owner',
       location: obj.location,

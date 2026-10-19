@@ -12,7 +12,6 @@ export enum PaymentMethod {
   CARD = 'card',
   PAYPAL = 'paypal',
   CASH = 'cash',
-  STRIPE = 'stripe',
 }
 
 export type paymentDocument = payment & Document;
@@ -27,7 +26,7 @@ export class payment {
   amount!: Number;
   @Prop({ type: String, enum: Object.values(Payments), required: true })
   status!: Payments;
-  @Prop({ type: String, enum: Object.values(PaymentMethod), default: PaymentMethod.STRIPE })
+  @Prop({ type: String, enum: Object.values(PaymentMethod), default: PaymentMethod.PAYPAL })
   method?: PaymentMethod;
   @Prop({ index: true })
   transactionId?: string;
@@ -40,3 +39,5 @@ export class payment {
 }
 
 export const paymentschema = SchemaFactory.createForClass(payment);
+
+paymentschema.index({ status: 1, updatedAt: -1, orderId: 1 });

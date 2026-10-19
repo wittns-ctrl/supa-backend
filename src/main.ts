@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { json, urlencoded, raw, static as expressStatic } from 'express';
+import { json, urlencoded, static as expressStatic } from 'express';
 import helmet from 'helmet';
 import { mkdirSync } from 'fs';
 import { resolve } from 'path';
@@ -77,32 +77,42 @@ async function bootstrap() {
             'default-src': ["'self'"],
             'script-src': [
               "'self'",
-              'https://js.stripe.com',
+              '*.paypal.com',
+              '*.paypalobjects.com',
               'https://accounts.google.com',
             ],
             'style-src': [
               "'self'",
               "'unsafe-inline'",
+              '*.paypal.com',
+              '*.paypalobjects.com',
               'https://fonts.googleapis.com',
             ],
             'font-src': ["'self'", 'https://fonts.gstatic.com', 'data:'],
             'img-src': ["'self'", 'data:', 'https:'],
             'frame-src': [
               "'self'",
-              'https://js.stripe.com',
-              'https://checkout.stripe.com',
+              '*.paypal.com',
+              '*.paypalobjects.com',
               'https://accounts.google.com',
               'https://appleid.apple.com',
             ],
+            'child-src': [
+              "'self'",
+              '*.paypal.com',
+              '*.paypalobjects.com',
+            ],
             'connect-src': [
               "'self'",
-              'https://api.stripe.com',
+              '*.paypal.com',
+              '*.paypalobjects.com',
               'https://identitytoolkit.googleapis.com',
               'https://securetoken.googleapis.com',
             ],
           },
         },
         frameguard: { action: 'deny' },
+        crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
         hsts: {
           maxAge: 31536000,
           includeSubDomains: true,
@@ -122,31 +132,7 @@ async function bootstrap() {
     );
   }
 
-  // ── Stripe webhook: capture the RAW body before any JSON parsing ──────────
-  // Stripe signature verification requires the exact raw bytes. The webhook
-  // route is registered first with express.raw() so req.rawBody is a Buffer.
-  const WEBHOOK_PATH = '/payments/webhook';
-  app.use(WEBHOOK_PATH, raw({ type: '*/*', limit: '1mb' }));
-  app.use(
-    WEBHOOK_PATH,
-    (req: any, _res: any, next: any) => {
-      req.rawBody = req.body; // Buffer from express.raw()
-      next();
-    },
-  );
-
-  // All other routes get normal JSON parsing; also stash rawBody for potential
-  // future signature-verified endpoints.
-  app.use(
-    json({
-      limit: '1mb',
-      verify: (req: any, _res, buf) => {
-        if (!req.originalUrl?.startsWith(WEBHOOK_PATH)) {
-          req.rawBody = buf;
-        }
-      },
-    }),
-  );
+  app.use(json({ limit: '1mb' }));
   app.use(urlencoded({ extended: true }));
 
   // ── Multipart (image uploads) ────────────────────────────────────────────

@@ -5,6 +5,8 @@ import { User } from 'src/users/schema/user.schema';
 import { order } from 'src/orders/schema/order.schema';
 import { bookings } from 'src/bookings/schema/bookings.schema';
 import { menu } from 'src/menus/schema/menu.schema';
+import { payment } from 'src/payments/schema/payments.schema';
+import { MailService } from 'src/mail/mail.service';
 import { RestaurantsService } from './restaurants.service';
 
 function mockModel() {
@@ -50,7 +52,9 @@ describe('RestaurantsService', () => {
         { provide: getModelToken(User.name), useValue: UserModel },
         { provide: getModelToken(order.name), useValue: OrderModel },
         { provide: getModelToken(bookings.name), useValue: BookingsModel },
+        { provide: getModelToken(payment.name), useValue: mockModel() },
         { provide: getModelToken(menu.name), useValue: MenuModel },
+        { provide: MailService, useValue: {} },
       ],
     }).compile();
 

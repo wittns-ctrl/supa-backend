@@ -5,12 +5,15 @@ import { InjectModel } from '@nestjs/mongoose';
 import { notification, notificationDocument } from './schema/notifications.schema';
 import { Model, Types } from 'mongoose';
 import { roles } from 'src/users/schema/user.schema';
+import { User, UserDocument } from 'src/users/schema/user.schema';
 
 @Injectable()
 export class NotificationsService {
   constructor(
     @InjectModel(notification.name)
     private notificationModel: Model<notificationDocument>,
+    @InjectModel(User.name)
+    private userModel: Model<UserDocument>,
   ) {}
 
   async create(dto: CreateNotificationDto) {
@@ -32,7 +35,18 @@ export class NotificationsService {
 
   async findAllForUser(userId: string, userRole: string) {
     if (userRole === roles.ADMIN) {
-      return this.findAll();
+      const items = await this.notificationModel
+        .find()
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean();
+      const recipientIds = [...new Set(items.map((item) => item.userId.toString()))];
+      const recipients = await this.userModel
+        .find({ _id: { $in: recipientIds } })
+        .select('name email accountType role')
+        .lean();
+      const recipientById = new Map(recipients.map((user) => [user._id.toString(), user]));
+      return items.map((item) => this.format(item, recipientById.get(item.userId.toString())));
     }
     const items = await this.notificationModel
       .find({ userId: new Types.ObjectId(userId) })
@@ -84,13 +98,23 @@ export class NotificationsService {
     return { message: 'Notification dismissed' };
   }
 
-  private format(n: notificationDocument) {
-    const obj = n.toObject();
+  private format(n: notificationDocument | Record<string, any>, recipient?: Record<string, any>) {
+    const obj = typeof (n as notificationDocument).toObject === 'function'
+      ? (n as notificationDocument).toObject()
+      : n;
+    const userRef = obj.userId;
     return {
       id: obj._id.toString(),
-      userId: obj.userId.toString(),
+      userId: userRef?._id?.toString?.() || userRef.toString(),
+      recipient: recipient ? {
+        id: recipient._id.toString(),
+        name: recipient.name,
+        email: recipient.email,
+        accountType: recipient.accountType || recipient.role,
+      } : undefined,
       title: obj.title,
       message: obj.message,
+      details: obj.details || undefined,
       isRead: obj.isRead,
       time: obj.createdAt
         ? new Date(obj.createdAt).toLocaleString()

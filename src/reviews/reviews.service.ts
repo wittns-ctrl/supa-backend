@@ -64,13 +64,28 @@ export class ReviewsService {
     return this.formatReview(created);
   }
 
-  async findAll(restaurantId?: string) {
-    const filter = restaurantId ? { restaurantId } : {};
-    const reviews = await this.reviewModel
-      .find(filter)
-      .populate('customerId', 'name')
-      .sort({ createdAt: -1 });
-    return reviews.map((r) => this.formatReview(r));
+  async findAll(restaurantId?: string, pageQuery?: string, limitQuery?: string) {
+    if (restaurantId && !Types.ObjectId.isValid(restaurantId)) {
+      throw new BadRequestException('Invalid restaurant id');
+    }
+    const requestedPage = pageQuery !== undefined || limitQuery !== undefined;
+    const page = Math.max(parseInt(pageQuery || '1', 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(limitQuery || (requestedPage ? '20' : '50'), 10) || 50, 1), 100);
+    const filter = restaurantId ? { restaurantId: new Types.ObjectId(restaurantId) } : {};
+    const [reviews, total] = await Promise.all([
+      this.reviewModel
+        .find(filter)
+        .populate('customerId', 'name')
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+      requestedPage ? this.reviewModel.countDocuments(filter).exec() : Promise.resolve(0),
+    ]);
+    const data = reviews.map((r) => this.formatReview(r));
+    return requestedPage
+      ? { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+      : data;
   }
 
   async findOne(id: string) {
@@ -109,14 +124,14 @@ export class ReviewsService {
   }
 
   private async updateRestaurantRating(restaurantId: string) {
-    const reviews = await this.reviewModel.find({ restaurantId });
-    const avg =
-      reviews.length > 0
-        ? reviews.reduce((sum, r) => sum + Number(r.rating), 0) / reviews.length
-        : 0;
+    const [summary] = await this.reviewModel.aggregate([
+      { $match: { restaurantId: new Types.ObjectId(restaurantId) } },
+      { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } },
+    ]).exec();
+    const avg = Number(summary?.average || 0);
     await this.restaurantModel.findByIdAndUpdate(restaurantId, {
       rating: Math.round(avg * 10) / 10,
-      reviewCount: reviews.length,
+      reviewCount: Number(summary?.count || 0),
     });
   }
 

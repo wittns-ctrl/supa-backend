@@ -310,8 +310,7 @@ export class MailService implements OnModuleInit {
 
   // ── Send payment receipt email ──────────────────────────────────────────
   /**
-   * Receipt for a completed payment. Called from the Stripe webhook path so
-   * the email fires exactly once per successful payment, server-side.
+   * Receipt for a completed payment, sent after server-side provider verification.
    */
   async sendPaymentReceipt(params: {
     to: string;
@@ -456,31 +455,41 @@ export class MailService implements OnModuleInit {
     if (!this.subscriberModel || !this.userModel || !this.notificationModel) {
       throw new ServiceUnavailableException('Newsletter delivery is not available right now.');
     }
+    const subscriberModel = this.subscriberModel;
+    const userModel = this.userModel;
+    const notificationModel = this.notificationModel;
 
     const subjectText = dto.subject.trim();
     const messageText = dto.message.trim();
-    const recipients = await this.userModel
+    const recipientCursor = userModel
       .find({ role: { $in: [roles.CUSTOMER, roles.OWNER] }, status: UserStatus.ACTIVE })
       .select('_id')
       .lean()
-      .exec();
+      .cursor();
 
     let inAppSent = 0;
-    for (let start = 0; start < recipients.length; start += 500) {
-      const batch = recipients.slice(start, start + 500);
-      const created = await this.notificationModel.insertMany(batch.map((recipient) => ({
+    let notificationBatch: { userId: unknown; title: string; message: string; isRead: boolean }[] = [];
+    const flushNotifications = async () => {
+      if (!notificationBatch.length) return;
+      const created = await notificationModel.insertMany(notificationBatch);
+      inAppSent += created.length;
+      notificationBatch = [];
+    };
+    for await (const recipient of recipientCursor) {
+      notificationBatch.push({
         userId: recipient._id,
         title: subjectText,
         message: messageText,
         isRead: false,
-      })));
-      inAppSent += created.length;
+      });
+      if (notificationBatch.length === 500) await flushNotifications();
     }
+    await flushNotifications();
 
-    const subscribers = await this.subscriberModel.find({ isActive: true })
+    const subscriberCursor = subscriberModel.find({ isActive: true })
       .select('email unsubscribeToken')
       .lean()
-      .exec();
+      .cursor();
 
     const subject = `[SupaMeal Update] ${subjectText}`;
     const safeSubject = escapeHtml(subjectText);
@@ -488,10 +497,10 @@ export class MailService implements OnModuleInit {
     const supportEmail = process.env.SUPPORT_EMAIL?.trim()
       || process.env.SMTP_USER?.trim()
       || 'mugishawitness15@gmail.com';
-    const results: boolean[] = [];
-
-    for (let start = 0; start < subscribers.length; start += 10) {
-      const batch = subscribers.slice(start, start + 10);
+    let sent = 0;
+    let failed = 0;
+    let total = 0;
+    const sendBatch = async (batch: { email: string; unsubscribeToken: string }[]) => {
       const batchResults = await Promise.all(batch.map((subscriber) => {
         const unsubscribeUrl = `${(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/newsletter/unsubscribe/${encodeURIComponent(subscriber.unsubscribeToken)}`;
         const safeUrl = escapeHtml(unsubscribeUrl);
@@ -499,15 +508,24 @@ export class MailService implements OnModuleInit {
         const text = `${subjectText}\n\n${messageText}\n\nUnsubscribe: ${unsubscribeUrl}`;
         return this.deliver(subscriber.email, subject, html, text);
       }));
-      results.push(...batchResults);
+      total += batchResults.length;
+      sent += batchResults.filter(Boolean).length;
+      failed += batchResults.filter((delivered) => !delivered).length;
+    };
+    let subscriberBatch: { email: string; unsubscribeToken: string }[] = [];
+    for await (const subscriber of subscriberCursor) {
+      subscriberBatch.push(subscriber);
+      if (subscriberBatch.length === 10) {
+        await sendBatch(subscriberBatch);
+        subscriberBatch = [];
+      }
     }
+    if (subscriberBatch.length) await sendBatch(subscriberBatch);
 
-    const sent = results.filter(Boolean).length;
-    const failed = results.length - sent;
-    if (sent === 0 && inAppSent === 0 && subscribers.length > 0) {
+    if (sent === 0 && inAppSent === 0 && total > 0) {
       throw new ServiceUnavailableException('Newsletter delivery failed. Check the configured email provider and try again.');
     }
-    this.logger.log(`Newsletter update delivered to ${sent} of ${results.length} subscribers (${failed} failed).`);
-    return { sent, failed, total: results.length, inAppSent };
+    this.logger.log(`Newsletter update delivered to ${sent} of ${total} subscribers (${failed} failed).`);
+    return { sent, failed, total, inAppSent };
   }
 }

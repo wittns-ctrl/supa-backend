@@ -58,3 +58,6 @@ export class restaurant {
 }
 
 export const restaurantSchema = SchemaFactory.createForClass(restaurant);
+
+restaurantSchema.index({ status: 1, isApproved: 1, createdAt: -1, _id: -1 });
+restaurantSchema.index({ ownerId: 1, createdAt: -1 });

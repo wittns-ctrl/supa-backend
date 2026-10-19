@@ -1,4 +1,4 @@
-import { IsMongoId, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsMongoId, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateNotificationDto {
   @IsMongoId()
@@ -13,4 +13,8 @@ export class CreateNotificationDto {
   @IsNotEmpty()
   @MaxLength(1000)
   message!: string;
+
+  @IsOptional()
+  @IsObject()
+  details?: Record<string, unknown>;
 }

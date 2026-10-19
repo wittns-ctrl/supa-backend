@@ -8,11 +8,11 @@ import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.
 import { payment, paymentschema } from 'src/payments/schema/payments.schema';
 import { NotificationsModule } from 'src/notifications/notifications.module';
 import { AuthModule } from 'src/auth/auth.module';
-import { PromosModule } from 'src/promos/promos.module';
 import { PaymentsModule } from 'src/payments/payments.module';
 import { OrderEventsService } from './order-events.service';
 import { SseTicketsService } from './sse-tickets.service';
 import { OrderEventsController } from './order-events.controller';
+import { User, Userschema } from 'src/users/schema/user.schema';
 
 @Module({
   imports: [
@@ -21,10 +21,10 @@ import { OrderEventsController } from './order-events.controller';
       { name: menu.name, schema: menuschema },
       { name: restaurant.name, schema: restaurantSchema },
       { name: payment.name, schema: paymentschema },
+      { name: User.name, schema: Userschema },
     ]),
     NotificationsModule,
     AuthModule,
-    PromosModule,
     PaymentsModule,
   ],
   controllers: [OrdersController, OrderEventsController],

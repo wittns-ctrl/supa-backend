@@ -6,11 +6,7 @@ import {
   Param,
   Delete,
   UseGuards,
-  Req,
-  Headers,
-  UnauthorizedException,
   BadRequestException,
-  HttpCode,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
@@ -23,44 +19,30 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
-  @Post('create-intent')
+  @Get('paypal/config')
   @UseGuards(JwtAuthGuard)
-  createIntent(
-    @Body() body: { orderId: string; metadata?: Record<string, string> },
+  getPaypalConfig() {
+    return this.paymentsService.getPaypalConfig();
+  }
+
+  @Post('paypal/create-order')
+  @UseGuards(JwtAuthGuard)
+  createPaypalOrder(
+    @Body() body: { orderId: string },
     @CurrentUser() user: { id: string; role: string },
   ) {
     if (!body?.orderId) throw new BadRequestException('orderId is required');
-    return this.paymentsService.createPaymentIntent(
-      body.orderId,
-      user.id,
-      user.role,
-      body.metadata || {},
-    );
+    return this.paymentsService.createPaypalOrder(body.orderId, user.id, user.role);
   }
 
-  @Post('confirm')
+  @Post('paypal/capture-order')
   @UseGuards(JwtAuthGuard)
-  confirm(
-    @Body() body: { paymentIntentId: string },
+  capturePaypalOrder(
+    @Body() body: { paypalOrderId: string },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    if (!body?.paymentIntentId) throw new BadRequestException('paymentIntentId is required');
-    // Ownership is enforced inside the service — a user may only confirm
-    // payments for their own orders (admins exempt).
-    return this.paymentsService.confirmPayment(body.paymentIntentId, user.id, user.role);
-  }
-
-  @Post('webhook')
-  @HttpCode(200)
-  async webhook(@Req() req: any, @Headers('stripe-signature') signature: string) {
-    if (!signature) {
-      throw new UnauthorizedException('Missing stripe-signature header');
-    }
-    const rawBody: Buffer = req.rawBody;
-    if (!rawBody) {
-      throw new BadRequestException('Raw body not available for webhook');
-    }
-    return this.paymentsService.handleStripeWebhook(signature, rawBody);
+    if (!body?.paypalOrderId) throw new BadRequestException('paypalOrderId is required');
+    return this.paymentsService.capturePaypalOrder(body.paypalOrderId, user.id, user.role);
   }
 
   @Get()
@@ -76,11 +58,8 @@ export class PaymentsController {
     @Param('orderId') orderId: string,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    // Ownership check would live in a service if this were queried by customers
-    if (user.role === roles.ADMIN) {
-      return this.paymentsService.findByOrder(orderId);
-    }
-    throw new UnauthorizedException('Admin role required');
+    if (user.role === roles.ADMIN) return this.paymentsService.findByOrder(orderId);
+    throw new BadRequestException('Admin role required');
   }
 
   @Get(':id')

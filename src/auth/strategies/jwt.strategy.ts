@@ -28,13 +28,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: { sub: string; email: string; role: string; sid: string; accountType: string }) {
     const user = await this.userModel
       .findById(payload.sub)
-      .select('-password -refreshToken -authSessions.refreshTokenHash -authSessions.previousRefreshTokenHash');
+      .select('+isPrimaryAdmin -password -refreshToken -authSessions.refreshTokenHash -authSessions.previousRefreshTokenHash');
     if (!user) throw new UnauthorizedException('User not found');
     if (!payload.accountType || user.accountType !== payload.accountType) {
       throw new UnauthorizedException('Authentication realm mismatch');
     }
+    if (
+      user.accountType === 'admin' &&
+      user.isPrimaryAdmin !== true
+    ) {
+      throw new UnauthorizedException('Admin access is not enabled for this account');
+    }
     if (user.status === UserStatus.BLOCKED) {
-      throw new UnauthorizedException('Account is blocked');
+      throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
     }
     const session: any = user.authSessions?.find(
       (entry: any) => entry.sessionId === payload.sid,

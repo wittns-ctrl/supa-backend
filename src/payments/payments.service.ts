@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import Stripe from 'stripe';
 import { payment, paymentDocument, Payments, PaymentMethod } from './schema/payments.schema';
 import { order, orderDocument, OrderStatus } from '../orders/schema/order.schema';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -18,7 +17,8 @@ import { roles } from 'src/users/schema/user.schema';
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
-  private stripe: Stripe | null = null;
+  private readonly paypalClientId = process.env.PAYPAL_CLIENT_ID || '';
+  private readonly paypalClientSecret = process.env.PAYPAL_CLIENT_SECRET || '';
 
   constructor(
     @InjectModel(payment.name) private paymentModel: Model<paymentDocument>,
@@ -26,34 +26,73 @@ export class PaymentsService {
     private readonly notificationsService: NotificationsService,
     private readonly mailservice: MailService,
   ) {
-    const sk = process.env.STRIPE_SECRET_KEY;
-    if (sk && sk.startsWith('sk_')) {
-      this.stripe = new Stripe(sk, {
-        apiVersion: '2026-08-26.dahlia' as any,
-        typescript: true,
-      });
-      this.logger.log('Stripe configured');
+    const env = (process.env.NODE_ENV || 'development').toLowerCase();
+    const isProd = env === 'production' || env === 'prod';
+    if (isProd && (!this.paypalClientId || !this.paypalClientSecret)) {
+      throw new Error('PAYMENTS_MISCONFIGURED: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are required in production.');
+    }
+    if (this.paypalClientId && this.paypalClientSecret) {
+      this.logger.log(`PayPal configured (${this.paypalEnvironment})`);
     } else {
-      const env = (process.env.NODE_ENV || 'development').toLowerCase();
-      const isProd = env === 'production' || env === 'prod';
-      if (isProd) {
-        throw new Error(
-          'PAYMENTS_MISCONFIGURED: STRIPE_SECRET_KEY is required when NODE_ENV=production. Refusing to start in insecure fake-payments mode.',
-        );
-      }
-      this.logger.warn(
-        'STRIPE_SECRET_KEY not set — payments module will run in FAKE mode (auto mark as paid) for local dev only. ' +
-          'This is ONLY allowed in NODE_ENV=development — production will refuse to boot.',
-      );
+      this.logger.warn('PayPal credentials are missing; checkout payments are disabled until PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are configured.');
     }
   }
 
   private get currency(): string {
-    return process.env.STRIPE_CURRENCY || 'usd';
+    return (process.env.PAYPAL_CURRENCY || 'USD').toUpperCase();
   }
 
-  isStripeConfigured(): boolean {
-    return !!this.stripe;
+  private get paypalEnvironment(): 'sandbox' | 'live' {
+    return (process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox';
+  }
+
+  private get paypalApiBase(): string {
+    return this.paypalEnvironment === 'live'
+      ? 'https://api-m.paypal.com'
+      : 'https://api-m.sandbox.paypal.com';
+  }
+
+  private assertPaypalConfigured() {
+    if (!this.paypalClientId || !this.paypalClientSecret) {
+      throw new BadRequestException('PayPal is not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET on the server.');
+    }
+  }
+
+  getPaypalConfig() {
+    this.assertPaypalConfigured();
+    return { clientId: this.paypalClientId, currency: this.currency };
+  }
+
+  private async paypalRequest(path: string, options: RequestInit = {}) {
+    this.assertPaypalConfigured();
+    const credentials = Buffer.from(`${this.paypalClientId}:${this.paypalClientSecret}`).toString('base64');
+    const tokenResponse = await fetch(`${this.paypalApiBase}/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials',
+    });
+    if (!tokenResponse.ok) {
+      this.logger.error(`PayPal OAuth failed with status ${tokenResponse.status}`);
+      throw new BadRequestException('Could not authenticate with PayPal. Check the configured API credentials.');
+    }
+    const token = await tokenResponse.json() as { access_token: string };
+    const response = await fetch(`${this.paypalApiBase}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token.access_token}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      this.logger.error(`PayPal API ${path} failed with status ${response.status}`);
+      throw new BadRequestException(body?.message || 'PayPal could not process the payment request.');
+    }
+    return body as Record<string, any>;
   }
 
   private assertValidOrderId(orderId: string) {
@@ -84,176 +123,115 @@ export class PaymentsService {
     return order;
   }
 
-  async createPaymentIntent(
-    orderId: string,
-    userId: string,
-    userRole: string,
-    metadata: Record<string, string> = {},
-  ) {
+  async createPaypalOrder(orderId: string, userId: string, userRole: string) {
     const order = await this.loadOrderForUser(orderId, userId, userRole);
-
     const amount = Number(order.total) || 0;
     if (amount <= 0) throw new BadRequestException('Invalid order total');
-
-    // Refuse double-payment for an already-paid order
     if (order.status !== OrderStatus.PENDING) {
-      throw new BadRequestException(
-        `Order is not payable in its current status (${order.status})`,
-      );
-    }
-    const existingPending = await this.paymentModel
-      .findOne({ orderId: order._id, status: Payments.PENDING, method: PaymentMethod.STRIPE })
-      .exec();
-    if (existingPending?.paymentIntentId && this.stripe) {
-      // Reuse the existing intent instead of creating duplicates
-      const intent = await this.stripe.paymentIntents.retrieve(existingPending.paymentIntentId);
-      if (intent.status !== 'succeeded' && intent.status !== 'canceled') {
-        return {
-          mode: 'stripe',
-          clientSecret: intent.client_secret,
-          paymentIntentId: intent.id,
-          amount,
-          currency: this.currency,
-          orderId: order.id,
-          publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
-        };
-      }
+      throw new BadRequestException(`Order is not payable in its current status (${order.status})`);
     }
 
-    const amountCents = Math.round(amount * 100);
-    const populatedCustomer = order.customerId as
-      | { _id?: Types.ObjectId }
-      | Types.ObjectId
-      | null
-      | undefined;
-    const customer =
-      populatedCustomer && typeof populatedCustomer === 'object' && '_id' in populatedCustomer && populatedCustomer._id
-        ? populatedCustomer._id
-        : (populatedCustomer as Types.ObjectId | undefined);
-    if (!customer) throw new BadRequestException('Order has no customer');
-
-    if (this.stripe) {
-      const intent = await this.stripe.paymentIntents.create({
-        amount: amountCents,
-        currency: this.currency,
-        // Client-supplied metadata spread FIRST so orderId/customerId can't be
-        // overridden — these keys are server-trusted and used by the webhook.
-        metadata: {
-          ...metadata,
-          orderId: order.id,
-          customerId: customer.toString(),
-        },
-        automatic_payment_methods: { enabled: true },
-      });
-
-      await this.paymentModel.create({
-        orderId: order._id,
-        amount,
-        status: Payments.PENDING,
-        method: PaymentMethod.STRIPE,
-        paymentIntentId: intent.id,
-        transactionId: intent.id,
-        currency: this.currency,
-        metadata,
-      });
-
+    const existingPending = await this.paymentModel.findOne({
+      orderId: order._id,
+      status: Payments.PENDING,
+      method: PaymentMethod.PAYPAL,
+    }).sort({ createdAt: -1 }).exec();
+    if (existingPending?.paymentIntentId) {
       return {
-        mode: 'stripe',
-        clientSecret: intent.client_secret,
-        paymentIntentId: intent.id,
+        paypalOrderId: existingPending.paymentIntentId,
+        clientId: this.paypalClientId,
         amount,
-        currency: this.currency,
-        orderId: order.id,
-        publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+        currency: existingPending.currency || this.currency,
+        localOrderId: order.id,
       };
     }
 
-    // Fake mode — for local dev only
-    const txId = randomUUID();
+    const paypalOrder = await this.paypalRequest('/v2/checkout/orders', {
+      method: 'POST',
+      headers: { 'PayPal-Request-Id': `supameal-${order.id}-${Date.now()}` },
+      body: JSON.stringify({
+        intent: 'CAPTURE',
+        purchase_units: [{
+          reference_id: order.id,
+          custom_id: order.id,
+          amount: { currency_code: this.currency, value: amount.toFixed(2) },
+        }],
+        application_context: {
+          user_action: 'PAY_NOW',
+          return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/customer/dashboard?tab=checkout`,
+          cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/customer/dashboard?tab=checkout`,
+        },
+      }),
+    });
+    if (!paypalOrder.id) throw new BadRequestException('PayPal did not return an order reference.');
+
     await this.paymentModel.create({
       orderId: order._id,
       amount,
-      status: Payments.PAID,
-      method: PaymentMethod.CASH,
-      // The client confirms with the returned paymentIntentId — without it
-      // confirmPayment() can't find this record and 404s.
-      paymentIntentId: txId,
-      transactionId: txId,
+      status: Payments.PENDING,
+      method: PaymentMethod.PAYPAL,
+      paymentIntentId: paypalOrder.id,
+      transactionId: paypalOrder.id,
       currency: this.currency,
-      metadata: { ...metadata, fake: 'true' },
     });
-
-    await this.notificationsService.create({
-      userId: customer.toString(),
-      title: 'Payment confirmed (dev mode)',
-      message: `Your order ${order.id} has been paid ($${amount.toFixed(2)}) and is awaiting restaurant acceptance.`,
-    });
-
     return {
-      mode: 'fake',
-      paymentIntentId: txId,
+      paypalOrderId: paypalOrder.id,
+      clientId: this.paypalClientId,
       amount,
       currency: this.currency,
-      orderId: order.id,
-      publishableKey: '',
-      warning:
-        'STRIPE_SECRET_KEY not configured — running in fake dev mode. No money moved.',
+      localOrderId: order.id,
     };
   }
 
-  async confirmPayment(paymentIntentId: string, userId?: string, userRole?: string) {
-    const record = await this.paymentModel.findOne({ paymentIntentId }).exec();
-    if (!record) {
-      // In case of a direct confirm without create (e.g. Stripe client-first)
-      if (!this.stripe) {
-        throw new NotFoundException('Payment record not found');
-      }
-      const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId);
-      const orderId = intent.metadata?.orderId;
-      if (!orderId) throw new BadRequestException('Payment does not have order metadata');
-      if (userId && userRole !== roles.ADMIN) {
-        await this.assertOrderOwnership(orderId, userId);
-      }
-      const res = await this._applyPaid(orderId, paymentIntentId, intent.amount_received / 100);
-      return { success: true, ...res };
+  async capturePaypalOrder(paypalOrderId: string, userId: string, userRole: string) {
+    const record = await this.paymentModel.findOne({
+      paymentIntentId: paypalOrderId,
+      method: PaymentMethod.PAYPAL,
+    }).exec();
+    if (!record?.orderId) throw new NotFoundException('PayPal payment record not found');
+    const order = await this.loadOrderForUser(record.orderId.toString(), userId, userRole);
+
+    if (record.status === Payments.PAID) {
+      return { success: true, paymentStatus: 'succeeded', orderId: order.id, status: order.status, amount: Number(record.amount) };
+    }
+    if (record.status !== Payments.PENDING) throw new BadRequestException('This PayPal payment is not pending.');
+    if (order.status !== OrderStatus.PENDING) {
+      throw new BadRequestException(`Order is no longer payable (${order.status}); PayPal has not been captured.`);
     }
 
-    if (userId && userRole !== roles.ADMIN && record.orderId) {
-      // Caller must own the order being paid (admins exempt)
-      await this.assertOrderOwnership(record.orderId.toString(), userId);
+    let captured: Record<string, any>;
+    try {
+      captured = await this.paypalRequest(`/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}/capture`, {
+        method: 'POST',
+        headers: { 'PayPal-Request-Id': `capture-${paypalOrderId}` },
+        body: '{}',
+      });
+    } catch (captureError) {
+      // Recover when PayPal captured successfully but the response was lost.
+      // The stored PayPal order ID is server-created and already bound to this local order.
+      captured = await this.paypalRequest(`/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}`);
+      if (captured.status !== 'COMPLETED') throw captureError;
+    }
+    const capture = captured.purchase_units?.[0]?.payments?.captures?.[0];
+    const capturedAmount = Number(capture?.amount?.value);
+    const capturedCurrency = String(capture?.amount?.currency_code || '').toUpperCase();
+    if (captured.status !== 'COMPLETED' || !capture?.id) {
+      throw new BadRequestException('PayPal has not completed this payment.');
+    }
+    if (capturedAmount !== Number(record.amount) || capturedCurrency !== String(record.currency || this.currency).toUpperCase()) {
+      this.logger.error(`PayPal amount mismatch for order ${order.id}`);
+      throw new BadRequestException('PayPal captured an amount that does not match this order. Contact support before retrying.');
     }
 
-    if (this.stripe && record.method === PaymentMethod.STRIPE) {
-      const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId);
-      if (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation') {
-        record.status = Payments.PENDING;
-        await record.save();
-        return { success: false, status: intent.status, clientSecret: intent.client_secret };
-      }
-      if (intent.status !== 'succeeded') {
-        record.status = Payments.FAILED;
-        await record.save();
-        return { success: false, status: intent.status };
-      }
-    }
-
-    const orderId = record.orderId?.toString();
-    if (!orderId) throw new BadRequestException('Payment does not have an order');
-    const applied = await this._applyPaid(orderId, paymentIntentId, Number(record.amount));
-    return { success: true, paymentStatus: 'succeeded', ...applied };
+    const applied = await this._applyPaid(order.id, paypalOrderId, capturedAmount, capture.id);
+    await this.paymentModel.updateOne(
+      { _id: record._id },
+      { $set: { transactionId: capture.id, currency: capturedCurrency, status: Payments.PAID } },
+    );
+    await this.sendPaymentReceipt(order.id, capturedAmount, capturedCurrency);
+    return { success: true, paymentStatus: 'succeeded', captureId: capture.id, ...applied };
   }
-
-  private async assertOrderOwnership(orderId: string, userId: string) {
-    this.assertValidOrderId(orderId);
-    const order = await this.orderModel.findById(orderId).select('customerId').exec();
-    if (!order) throw new NotFoundException('Order not found');
-    const customerId = order.customerId?.toString();
-    if (customerId !== userId) {
-      throw new UnauthorizedException('You are not authorized to confirm this payment');
-    }
-  }
-
-  private async _applyPaid(orderId: string, paymentIntentId: string, amount: number) {
+  private async _applyPaid(orderId: string, paymentIntentId: string, amount: number, transactionId = paymentIntentId) {
     const order = await this.orderModel.findById(orderId);
     if (!order) throw new NotFoundException('Order not found');
 
@@ -286,6 +264,18 @@ export class PaymentsService {
         userId: customerId,
         title: 'Payment confirmed',
         message: `Your order ${order.id} has been paid and is awaiting restaurant acceptance.`,
+        details: {
+          eventType: 'payment.confirmed',
+          occurredAt: new Date().toISOString(),
+          orderId: order._id.toString(),
+          orderStatus: order.status,
+          paymentStatus: Payments.PAID,
+          paymentIntentId,
+          transactionId,
+          amount: { value: amount, currency: this.currency.toUpperCase() },
+          customerId,
+          restaurantId: order.restaurantId.toString(),
+        },
       });
     }
 
@@ -295,8 +285,7 @@ export class PaymentsService {
   /**
    * Refund the most recent successful payment for an order. Used when a paid
    * order is cancelled. Idempotent: skips orders whose latest payment is
-   * already refunded, and skips gracefully when Stripe is not configured
-   * (fake dev mode has no money to return).
+   * already refunded and reports provider failures to the caller.
    */
   async refundOrderPayment(orderId: string): Promise<{ refunded: boolean; reason?: string }> {
     this.assertValidOrderId(orderId);
@@ -304,101 +293,49 @@ export class PaymentsService {
       .findOne({ orderId: new Types.ObjectId(orderId), status: Payments.PAID })
       .sort({ createdAt: -1 })
       .exec();
-    if (!record) {
-      return { refunded: false, reason: 'no paid payment found' };
-    }
-    if (!this.stripe || !record.paymentIntentId) {
-      return { refunded: false, reason: 'stripe not configured or no payment intent' };
+    if (!record) return { refunded: false, reason: 'no paid payment found' };
+    if (record.method !== PaymentMethod.PAYPAL || !record.transactionId) {
+      return { refunded: false, reason: 'PayPal capture reference is unavailable' };
     }
     try {
-      await this.stripe.refunds.create({ payment_intent: record.paymentIntentId });
-    } catch (err) {
-      // Already-refunded is the only expected conflict — treat as success
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/already been refunded/i.test(message)) {
-        this.logger.error(`Refund failed for order ${orderId}`, err as Error);
-        return { refunded: false, reason: message };
+      const refund = await this.paypalRequest(`/v2/payments/captures/${encodeURIComponent(record.transactionId)}/refund`, {
+        method: 'POST',
+        headers: { 'PayPal-Request-Id': `refund-${record.transactionId}` },
+        body: JSON.stringify({}),
+      });
+      if (refund.status !== 'COMPLETED') {
+        return { refunded: false, reason: `PayPal refund status is ${refund.status || 'unknown'}` };
       }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Refund failed for order ${orderId}`, err as Error);
+      return { refunded: false, reason };
     }
-    await this.paymentModel.updateOne(
-      { _id: record._id },
-      { $set: { status: Payments.REFUNDED } },
-    );
+    await this.paymentModel.updateOne({ _id: record._id }, { $set: { status: Payments.REFUNDED } });
     return { refunded: true };
   }
-
-  async handleStripeWebhook(signature: string, rawBody: Buffer) {
-    if (!this.stripe) {
-      throw new BadRequestException('Stripe is not configured');
-    }
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!webhookSecret) throw new BadRequestException('Webhook secret not set');
-
-    let event: Stripe.Event;
+  private async sendPaymentReceipt(orderId: string, amount: number, currency: string) {
     try {
-      // rawBody is now a real Buffer captured by express.raw() in main.ts
-      event = this.stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+      const order = await this.orderModel.findById(orderId).populate('customerId', 'email').exec();
+      const email = typeof order?.customerId === 'object'
+        ? (order.customerId as { email?: string }).email
+        : undefined;
+      if (!email) return;
+      await this.mailservice.sendPaymentReceipt({
+        to: email,
+        orderId,
+        amount,
+        currency: currency.toLowerCase(),
+        itemsSummary: order?.items?.map((item) => `${item.name} ×${item.qty}`).join(', '),
+      });
     } catch (err) {
-      this.logger.error('Webhook signature verification failed', err as Error);
-      throw new BadRequestException('Invalid webhook signature');
+      this.logger.warn('Payment receipt email failed', err as Error);
     }
-
-    // Webhooks are server-trusted (signature verified) — no user scoping here.
-    if (event.type === 'payment_intent.succeeded') {
-      const pi = event.data.object as Stripe.PaymentIntent;
-      await this.confirmPayment(pi.id);
-
-      // Receipt email fires here (and only here) so each successful payment
-      // produces exactly one receipt, even if the client also called confirm.
-      try {
-        const orderId = pi.metadata?.orderId;
-        if (orderId) {
-          const order = await this.orderModel
-            .findById(orderId)
-            .populate('customerId', 'email')
-            .exec();
-          const email =
-            typeof order?.customerId === 'object'
-              ? (order.customerId as { email?: string }).email
-              : undefined;
-          if (email) {
-            await this.mailservice.sendPaymentReceipt({
-              to: email,
-              orderId,
-              amount: pi.amount_received / 100,
-              currency: pi.currency || this.currency,
-              itemsSummary: order?.items
-                ?.map((i) => `${i.name} ×${i.qty}`)
-                .join(', '),
-            });
-          }
-        }
-      } catch (err) {
-        // A receipt failure must never fail the webhook (Stripe would retry)
-        this.logger.warn('Payment receipt email failed', err as Error);
-      }
-    } else if (event.type === 'payment_intent.payment_failed') {
-      const pi = event.data.object as Stripe.PaymentIntent;
-      await this.paymentModel.updateOne(
-        { paymentIntentId: pi.id },
-        { $set: { status: Payments.FAILED } },
-      );
-    } else if (event.type === 'charge.refunded') {
-      const ch = event.data.object as Stripe.Charge;
-      if (ch.payment_intent && typeof ch.payment_intent === 'string') {
-        await this.paymentModel.updateOne(
-          { paymentIntentId: ch.payment_intent },
-          { $set: { status: Payments.REFUNDED } },
-        );
-      }
-    }
-    return { received: true, type: event.type };
   }
-
   create(createPaymentDto: Partial<payment>) {
     if (!createPaymentDto.transactionId) createPaymentDto.transactionId = randomUUID();
     if (!createPaymentDto.status) createPaymentDto.status = Payments.PENDING;
-    if (!createPaymentDto.method) createPaymentDto.method = PaymentMethod.STRIPE;
+    if (!createPaymentDto.method) createPaymentDto.method = PaymentMethod.PAYPAL;
     return this.paymentModel.create(createPaymentDto);
   }
 

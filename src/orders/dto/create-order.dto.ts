@@ -90,8 +90,4 @@ export class CreateOrderDto {
   @MaxLength(50)
   timeSlot?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(30)
-  promoCode?: string;
 }

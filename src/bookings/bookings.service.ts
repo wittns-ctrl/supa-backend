@@ -41,6 +41,14 @@ export class BookingsService {
     return `${restaurantId}:${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
   }
 
+  private async sumActiveSeats(filter: Record<string, unknown>): Promise<number> {
+    const [result] = await this.bookingsModel.aggregate([
+      { $match: filter },
+      { $group: { _id: null, seats: { $sum: { $toDouble: '$guests' } } } },
+    ]).exec();
+    return Number(result?.seats || 0);
+  }
+
   constructor(
     @InjectModel(bookings.name)
     private readonly bookingsModel: Model<bookingsDocument>,
@@ -103,7 +111,7 @@ export class BookingsService {
     return this.withDayLock(
       this.dayKey(createBookingDto.restaurantId, bookingDate),
       async () => {
-        const sameDay = await this.bookingsModel.find({
+        const seatsTaken = await this.sumActiveSeats({
           restaurantId: createBookingDto.restaurantId,
           bookingDate: {
             $gte: new Date(bookingDate.getFullYear(), bookingDate.getMonth(), bookingDate.getDate()),
@@ -111,7 +119,6 @@ export class BookingsService {
           },
           status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
         });
-        const seatsTaken = sameDay.reduce((sum, b) => sum + Number(b.guests || 0), 0);
         if (restaurantDoc.capacity && seatsTaken + guests > Number(restaurantDoc.capacity)) {
           throw new BadRequestException(
             'No availability for this date — the restaurant is fully booked',
@@ -284,7 +291,7 @@ export class BookingsService {
         if (restaurantDoc?.capacity) {
           // Capacity check against other active bookings on that date — excluding
           // this booking itself from the sum.
-          const sameDay = await this.bookingsModel.find({
+          const seatsTaken = await this.sumActiveSeats({
             _id: { $ne: existing._id },
             restaurantId: existing.restaurantId,
             bookingDate: {
@@ -293,7 +300,6 @@ export class BookingsService {
             },
             status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
           });
-          const seatsTaken = sameDay.reduce((sum, b) => sum + Number(b.guests || 0), 0);
           if (seatsTaken + nextGuests > Number(restaurantDoc.capacity)) {
             throw new BadRequestException(
               'No availability for this date — the restaurant is fully booked',

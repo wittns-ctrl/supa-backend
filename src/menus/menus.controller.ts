@@ -34,8 +34,12 @@ export class MenusController {
   }
 
   @Get()
-  findAll(@Query('restaurantId') restaurantId?: string) {
-    return this.menusService.findAll(restaurantId);
+  findAll(
+    @Query('restaurantId') restaurantId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.menusService.findAll(restaurantId, page, limit);
   }
 
   @Get('owner/:restaurantId')
@@ -44,11 +48,15 @@ export class MenusController {
   findAllForOwner(
     @Param('restaurantId') restaurantId: string,
     @CurrentUser() user: { id: string; role: string },
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     return this.menusService.findAllForOwner(
       restaurantId,
       user.id,
       effectiveRestaurantRole(user),
+      page,
+      limit,
     );
   }
 

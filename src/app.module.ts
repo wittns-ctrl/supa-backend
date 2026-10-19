@@ -12,7 +12,6 @@ import { PaymentsModule } from './payments/payments.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { OrdersModule } from './orders/orders.module';
 import { AdminModule } from './admin/admin.module';
-import { PromosModule } from './promos/promos.module';
 import { SeedModule } from './seed/seed.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -41,9 +40,14 @@ const THROTTLE_LIMIT = Number(process.env.THROTTLE_LIMIT) || 100;
         const uri =
           configService.get<string>('MONGO_URI') ||
           'mongodb://localhost:27017/supameal';
+        const maxPoolSize = Number(configService.get('MONGO_MAX_POOL_SIZE')) || 50;
+        const minPoolSize = Number(configService.get('MONGO_MIN_POOL_SIZE')) || 2;
         return {
           uri,
           serverSelectionTimeoutMS: 5000,
+          maxPoolSize,
+          minPoolSize: Math.min(minPoolSize, maxPoolSize),
+          maxConnecting: Math.min(4, maxPoolSize),
         };
       },
     }),
@@ -87,7 +91,6 @@ const THROTTLE_LIMIT = Number(process.env.THROTTLE_LIMIT) || 100;
     ProfilesModule,
     OrdersModule,
     AdminModule,
-    PromosModule,
     MailModule,
     SeedModule,
     UploadsModule,

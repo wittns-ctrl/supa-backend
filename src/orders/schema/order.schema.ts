@@ -66,8 +66,6 @@ export class order {
   deliveryAddress?: OrderDeliveryAddress;
   @Prop()
   timeSlot?: string;
-  @Prop()
-  promoCode?: string;
   @Prop({ required: true })
   subtotal!: number;
   @Prop({ default: 3.99 })
@@ -94,4 +92,5 @@ export const orderSchema = SchemaFactory.createForClass(order);
 
 orderSchema.index({ customerId: 1, createdAt: -1 });
 orderSchema.index({ restaurantId: 1, createdAt: -1 });
+orderSchema.index({ restaurantId: 1, status: 1, updatedAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });

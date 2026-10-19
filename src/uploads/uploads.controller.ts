@@ -12,7 +12,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
+import { access, mkdir, unlink, writeFile } from 'fs/promises';
 import { dirname, join, resolve, sep } from 'path';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
@@ -60,7 +60,7 @@ export class UploadsController {
       limits: { fileSize: MAX_FILE_BYTES, files: 1 },
     }),
   )
-  upload(@UploadedFile() file: any) {
+  async upload(@UploadedFile() file: any) {
     if (!file) {
       throw new BadRequestException(
         'No file uploaded — send multipart/form-data with a "file" field',
@@ -78,16 +78,16 @@ export class UploadsController {
     }
 
     // UUID filename — original name never touches the disk
-    mkdirSync(UPLOAD_DIR, { recursive: true });
+    await mkdir(UPLOAD_DIR, { recursive: true });
     const filename = `${randomUUID()}.${ext}`;
-    writeFileSync(join(UPLOAD_DIR, filename), file.buffer);
+    await writeFile(join(UPLOAD_DIR, filename), file.buffer);
 
     return { url: `/uploads/${filename}`, size: file.size };
   }
 
   @Delete(':filename')
   @Roles(roles.OWNER, roles.ADMIN)
-  remove(@Param('filename') filename: string) {
+  async remove(@Param('filename') filename: string) {
     if (!SAFE_FILENAME.test(filename)) {
       throw new BadRequestException('Invalid filename');
     }
@@ -96,10 +96,12 @@ export class UploadsController {
     if (!target.startsWith(UPLOAD_DIR + sep)) {
       throw new BadRequestException('Invalid filename');
     }
-    if (!existsSync(target)) {
+    try {
+      await access(target);
+    } catch {
       throw new NotFoundException('File not found');
     }
-    unlinkSync(target);
+    await unlink(target);
     return { message: 'File deleted' };
   }
 }

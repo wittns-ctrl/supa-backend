@@ -12,6 +12,8 @@ export class notification {
   title!: string;
   @Prop({ required: true })
   message!: string;
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  details?: Record<string, unknown>;
   @Prop({ required: true, default: false })
   isRead!: boolean;
 }

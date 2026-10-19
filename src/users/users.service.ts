@@ -337,7 +337,6 @@ export class UsersService implements OnModuleInit {
       rating: r.rating,
       reviews: r.reviewCount,
       deliveryTime: '25-40 min',
-      priceRange: '$$',
       image: r.images?.[0] || '',
     }));
   }

@@ -3,6 +3,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
 import { OAuthStateService } from './oauth-state.service';
+import { OAuthCodeRecord } from './schema/oauth-record.schema';
+import { getModelToken } from '@nestjs/mongoose';
 // token: AppleAuthService
 
 describe('AuthController', () => {
@@ -20,6 +22,7 @@ describe('AuthController', () => {
         { provide: AuthService, useValue: mockSvc },
         { provide: AppleAuthService, useValue: {} },
         { provide: OAuthStateService, useValue: { issue: jest.fn(), consume: jest.fn() } },
+        { provide: getModelToken(OAuthCodeRecord.name), useValue: {} },
       ],
     }).compile();
 

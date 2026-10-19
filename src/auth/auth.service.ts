@@ -78,11 +78,16 @@ export class AuthService {
     return email ? email.trim().toLowerCase() : '';
   }
 
-  private findUserByEmail(email: string, accountType: AuthAccountType = AuthAccountType.CUSTOMER) {
+  private findUserByEmail(
+    email: string,
+    accountType: AuthAccountType = AuthAccountType.CUSTOMER,
+    primaryAdminOnly = false,
+  ) {
     const normalized = this.normalizeEmail(email);
     if (!normalized) return null;
     return this.userModel.findOne({
       accountType,
+      ...(primaryAdminOnly ? { isPrimaryAdmin: true } : {}),
       email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'i') },
     });
   }
@@ -287,13 +292,13 @@ export class AuthService {
   }
 
   async signin(signinDto: loginAuthDto, accountType = AuthAccountType.CUSTOMER) {
-    const user = await this.findUserByEmail(signinDto.email, accountType);
+    const user = await this.findUserByEmail(
+      signinDto.email,
+      accountType,
+      accountType === AuthAccountType.ADMIN,
+    );
 
     if (!user) {
-      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
-    }
-
-      if (user.status === 'blocked') {
       throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
     }
 
@@ -311,6 +316,12 @@ export class AuthService {
 
     if (!isMatch) {
       throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
+    }
+
+    // Only identify a blocked account after valid credentials are supplied,
+    // so this response cannot be used to enumerate blocked email addresses.
+    if (user.status === 'blocked') {
+      throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
     }
 
     const tokens = await this.generateTokens(user);
@@ -364,6 +375,9 @@ export class AuthService {
     let user = await this.findUserByEmail(normalizedEmail, AuthAccountType.CUSTOMER);
 
     if (user) {
+      if (user.status === 'blocked') {
+        throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
+      }
       // Link OAuth provider if this is their first OAuth login
       if (!user.oauthProvider && user.email.toLowerCase() === normalizedEmail) {
         user.oauthProvider = data.provider;
@@ -538,16 +552,22 @@ export class AuthService {
     }
 
     const userId = payload.sub;
-    const user = await this.userModel.findById(userId);
+    const user = await this.userModel.findById(userId).select('+isPrimaryAdmin');
     if (payload.accountType !== accountType || user?.accountType !== accountType) {
       throw new UnauthorizedException('Refresh session belongs to another account type');
+    }
+    if (
+      accountType === AuthAccountType.ADMIN &&
+      user?.isPrimaryAdmin !== true
+    ) {
+      throw new UnauthorizedException('Admin access is not enabled for this account');
     }
     if (!user || !payload.sid || !user.authSessions?.length) {
       throw new UnauthorizedException('Refresh token has been revoked');
     }
 
     if (user.status === 'blocked') {
-      throw new UnauthorizedException('Account is blocked');
+      throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
     }
 
     // Constant-time comparison of SHA-256 hashes

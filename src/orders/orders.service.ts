@@ -14,10 +14,7 @@ import { menu, menuDocument } from 'src/menus/schema/menu.schema';
 import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { Payments, payment, paymentDocument } from 'src/payments/schema/payments.schema';
-import { randomUUID } from 'crypto';
-import { roles } from 'src/users/schema/user.schema';
-import { PromosService } from 'src/promos/promos.service';
-import { PromoDiscountType } from 'src/promos/schema/promo.schema';
+import { roles, User, UserDocument } from 'src/users/schema/user.schema';
 import { OrderEventsService } from './order-events.service';
 import { PaymentsService } from 'src/payments/payments.service';
 
@@ -76,8 +73,8 @@ export class OrdersService {
     @InjectModel(menu.name) private menuModel: Model<menuDocument>,
     @InjectModel(restaurant.name) private restaurantModel: Model<restaurantDocument>,
     @InjectModel(payment.name) private paymentModel: Model<paymentDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private notificationsService: NotificationsService,
-    private promosService: PromosService,
     private readonly orderEvents: OrderEventsService,
     private readonly paymentsService: PaymentsService,
   ) {}
@@ -130,10 +127,7 @@ export class OrdersService {
       throw new BadRequestException('Please choose a valid delivery time');
     }
 
-    const orderItems: { menuItemId: Types.ObjectId; name: string; qty: number; price: number }[] = [];
-    let subtotal = 0;
-
-    for (const item of dto.items) {
+    const validItems = dto.items.map((item) => {
       if (!item.menuItemId || !Types.ObjectId.isValid(item.menuItemId)) {
         throw new BadRequestException(`Invalid menu item id: ${item.menuItemId}`);
       }
@@ -141,8 +135,19 @@ export class OrdersService {
       if (!Number.isInteger(qty) || qty < 1 || qty > 100) {
         throw new BadRequestException('Item quantity must be between 1 and 100');
       }
-      const menuItem = await this.menuModel.findById(item.menuItemId);
-      if (!menuItem) throw new NotFoundException(`Menu item ${item.menuItemId} not found`);
+      return { id: new Types.ObjectId(item.menuItemId), qty };
+    });
+    // Fetch all cart items in one database round trip instead of one query per item.
+    const menuItems = await this.menuModel.find({
+      _id: { $in: validItems.map(({ id }) => id) },
+    }).exec();
+    const menuById = new Map(menuItems.map((menuItem) => [menuItem._id.toString(), menuItem]));
+    const orderItems: { menuItemId: Types.ObjectId; name: string; qty: number; price: number }[] = [];
+    let subtotal = 0;
+
+    for (const item of validItems) {
+      const menuItem = menuById.get(item.id.toString());
+      if (!menuItem) throw new NotFoundException(`Menu item ${item.id.toString()} not found`);
       if (!menuItem.isAvailable) {
         throw new BadRequestException(`${menuItem.name} is not available`);
       }
@@ -156,36 +161,13 @@ export class OrdersService {
       orderItems.push({
         menuItemId: menuItem._id,
         name: menuItem.name,
-        qty,
+        qty: item.qty,
         price: Number(menuItem.price),
       });
-      subtotal += Number(menuItem.price) * qty;
+      subtotal += Number(menuItem.price) * item.qty;
     }
 
-    let discount = 0;
-    let appliedPromoId: Types.ObjectId | null = null;
-    let appliedDiscountType: PromoDiscountType | null = null;
-    if (dto.promoCode) {
-      const promoResult = await this.promosService.validateCode(dto.promoCode, subtotal);
-      if (promoResult.valid) {
-        // Consume the promo atomically BEFORE creating the order — if the code
-        // just hit its usage limit, we refuse the discount instead of granting
-        // one and silently swallowing the increment failure afterwards.
-        const promoId = (promoResult as any).promoId
-          ? new Types.ObjectId((promoResult as any).promoId)
-          : null;
-        if (promoId) {
-          const consumed = await this.promosService.incrementUsageSafe(promoId);
-          if (!consumed) {
-            throw new BadRequestException('Promo code has just reached its usage limit');
-          }
-          appliedPromoId = promoId;
-        }
-        discount = promoResult.discount;
-        appliedDiscountType = (promoResult as any).discountType ?? null;
-      }
-    }
-
+    const discount = 0;
     const deliveryFee = 3.99;
     const total = Math.max(0, Math.round((subtotal + deliveryFee - discount) * 100) / 100);
 
@@ -201,7 +183,6 @@ export class OrdersService {
       items: orderItems,
       deliveryAddress: trimmedAddress,
       timeSlot: dto.timeSlot,
-      promoCode: dto.promoCode,
       subtotal,
       deliveryFee,
       discount,
@@ -211,22 +192,38 @@ export class OrdersService {
       timeline,
     });
 
-    // NOTE: promo usage was already incremented atomically BEFORE order
-    // creation (validate → consume → create). No post-hoc increment here.
-
-    await this.paymentModel.create({
-      orderId: created._id,
-      amount: total,
-      status: Payments.PENDING,
-      transactionId: randomUUID(),
-    });
-
     const restaurantDoc = await this.restaurantModel.findById(dto.restaurantId);
+    const customerDoc = await this.userModel.findById(dto.customerId).select('name email phone');
+    const createdAt = new Date();
+    const orderTrace = {
+      eventType: 'order.created',
+      occurredAt: createdAt.toISOString(),
+      orderId: created._id.toString(),
+      orderStatus: created.status,
+      paymentStatus: Payments.PENDING,
+      customer: {
+        id: dto.customerId,
+        name: customerDoc?.name,
+        email: customerDoc?.email,
+        phone: customerDoc?.phone,
+      },
+      restaurant: {
+        id: dto.restaurantId,
+        name: restaurantDoc?.name,
+      },
+      items: created.items.map((item) => ({ name: item.name, quantity: item.qty, unitPrice: item.price })),
+      amounts: { subtotal, deliveryFee, discount, total, currency: 'USD' },
+      delivery: {
+        address: trimmedAddress,
+        requestedTime: created.timeSlot,
+      },
+    };
     if (restaurantDoc) {
       await this.notificationsService.create({
         userId: restaurantDoc.ownerId.toString(),
         title: 'New Order',
         message: `New order received - $${total.toFixed(2)}`,
+        details: orderTrace,
       });
     }
 
@@ -234,6 +231,7 @@ export class OrdersService {
       userId: dto.customerId,
       title: 'Order Placed',
       message: `Your order #${created._id.toString().slice(-4)} has been placed`,
+      details: orderTrace,
     });
 
     return this.formatOrder(created, restaurantDoc?.name);
@@ -370,7 +368,7 @@ export class OrdersService {
     const populated = await this.orderModel
       .findById(id)
       .populate('restaurantId', 'name ownerId')
-      .populate('customerId', 'name')
+      .populate('customerId', 'name email phone')
       .exec();
 
     if (!populated) throw new NotFoundException('Order not found');
@@ -452,10 +450,43 @@ export class OrdersService {
       }
     }
 
+    const latestPayment = await this.paymentModel
+      .findOne({ orderId: updated._id })
+      .sort({ createdAt: -1 })
+      .select('status method transactionId amount currency');
+
     await this.notificationsService.create({
       userId: customerId,
       title: 'Order Update',
       message: `Your order is now: ${STATUS_LABELS[status] || status}`,
+      details: {
+        eventType: 'order.status_changed',
+        occurredAt: new Date().toISOString(),
+        orderId: updated._id.toString(),
+        previousStatus: populated.status,
+        orderStatus: updated.status,
+        actorUserId: userId,
+        customer: typeof updated.customerId === 'object' ? {
+          id: customerId,
+          name: (updated.customerId as any).name,
+          email: (updated.customerId as any).email,
+          phone: (updated.customerId as any).phone,
+        } : { id: customerId },
+        restaurant: typeof populated.restaurantId === 'object' ? {
+          id: (populated.restaurantId as any)._id.toString(),
+          name: (populated.restaurantId as any).name,
+        } : { id: String(populated.restaurantId) },
+        amount: { total: updated.total, currency: 'USD' },
+        payment: latestPayment ? {
+          status: latestPayment.status,
+          method: latestPayment.method,
+          transactionId: latestPayment.transactionId,
+          amount: latestPayment.amount,
+          currency: latestPayment.currency,
+        } : { status: 'not recorded' },
+        items: updated.items.map((item) => ({ name: item.name, quantity: item.qty, unitPrice: item.price })),
+        delivery: updated.deliveryAddress,
+      },
     });
 
     // Live push to any open SSE tracking streams for this order
@@ -485,7 +516,6 @@ export class OrdersService {
       })),
       deliveryAddress: original.deliveryAddress,
       timeSlot: original.timeSlot,
-      promoCode: original.promoCode,
     });
   }
 

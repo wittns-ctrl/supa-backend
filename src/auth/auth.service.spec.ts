@@ -4,6 +4,7 @@ import { User } from '../users/schema/user.schema';
 import { JwtService } from '@nestjs/jwt';
 import { MailService } from 'src/mail/mail.service';
 import { AuthService } from './auth.service';
+import { restaurant } from 'src/restaurants/schema/restaurant.schema';
 
 function mockModel() {
   const chain = {
@@ -43,6 +44,7 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: getModelToken(User.name), useValue: UserModel },
+        { provide: getModelToken(restaurant.name), useValue: mockModel() },
         { provide: JwtService, useValue: jwtService },
         { provide: MailService, useValue: mailService },
       ],

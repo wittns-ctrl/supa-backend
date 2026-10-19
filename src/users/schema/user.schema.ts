@@ -87,6 +87,10 @@ export class User {
   email!: string;
   @Prop({ type: String, enum: Object.values(AuthAccountType), default: AuthAccountType.CUSTOMER, required: true })
   accountType!: AuthAccountType;
+  // The single administrator permitted to authenticate is provisioned by the
+  // server bootstrap. This flag is never accepted from public signup/update DTOs.
+  @Prop({ type: Boolean, default: false, select: false })
+  isPrimaryAdmin?: boolean;
   @Prop()
   password?: string;
   // Phone stored as string — Numbers drop leading zeros and "+" country codes
@@ -139,3 +143,12 @@ export const Userschema = SchemaFactory.createForClass(User);
 // Lookup by hashed refresh/reset/OTP tokens must be fast and indexed
 Userschema.index({ resetToken: 1 }, { sparse: true });
 Userschema.index({ email: 1, accountType: 1 }, { unique: true, name: 'email_account_type_unique' });
+Userschema.index({ status: 1, role: 1, _id: 1 });
+Userschema.index(
+  { accountType: 1, isPrimaryAdmin: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { accountType: AuthAccountType.ADMIN, isPrimaryAdmin: true },
+    name: 'single_primary_admin',
+  },
+);

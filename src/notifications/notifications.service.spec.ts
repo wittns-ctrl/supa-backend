@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { notification } from './schema/notifications.schema';
 import { NotificationsService } from './notifications.service';
+import { User } from 'src/users/schema/user.schema';
 
 function mockModel() {
   const chain = {
@@ -39,6 +40,7 @@ describe('NotificationsService', () => {
       providers: [
         NotificationsService,
         { provide: getModelToken(notification.name), useValue: NotificationModel },
+        { provide: getModelToken(User.name), useValue: mockModel() },
       ],
     }).compile();
 

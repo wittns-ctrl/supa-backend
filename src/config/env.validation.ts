@@ -1,8 +1,8 @@
 import { plainToInstance } from 'class-transformer';
 import {
-  IsBoolean,
   IsEnum,
   IsInt,
+  IsIn,
   IsOptional,
   IsString,
   MinLength,
@@ -24,6 +24,16 @@ export class EnvVars {
   @IsOptional()
   @IsString()
   MONGO_URI?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  MONGO_MAX_POOL_SIZE?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  MONGO_MIN_POOL_SIZE?: number;
 
   @IsString()
   @MinLength(32, { message: 'JWT_SECRET must be at least 32 characters in production' })
@@ -56,19 +66,21 @@ export class EnvVars {
 
   @IsOptional()
   @IsString()
-  STRIPE_SECRET_KEY?: string;
+  PAYPAL_CLIENT_ID?: string;
 
   @IsOptional()
   @IsString()
-  STRIPE_WEBHOOK_SECRET?: string;
+  PAYPAL_CLIENT_SECRET?: string;
 
   @IsOptional()
   @IsString()
-  STRIPE_PUBLISHABLE_KEY?: string;
+  @IsIn(['sandbox', 'live'])
+  PAYPAL_ENV?: string;
 
   @IsOptional()
-  @IsBoolean()
-  SEED_DEMO_DATA?: boolean;
+  @IsString()
+  PAYPAL_CURRENCY?: string;
+
 }
 
 /**
@@ -110,6 +122,9 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
 
   // Production hard requirements beyond the schema above
   if (isProd) {
+    if (!config.PAYPAL_CLIENT_ID || !config.PAYPAL_CLIENT_SECRET) {
+      throw new Error('FATAL: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are required in production');
+    }
     if (!config.MONGO_URI) {
       throw new Error('FATAL: MONGO_URI is required in production');
     }

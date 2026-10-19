@@ -393,10 +393,13 @@ export class AuthController {
 
   private async redirectOAuthResult(
     res: Response,
-    result?: { accessToken?: string; refreshToken?: string; user?: unknown },
+    result?: { accessToken?: string; refreshToken?: string; user?: unknown; authError?: string },
   ) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     try {
+      if (result?.authError) {
+        return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(result.authError)}`);
+      }
       if (!result?.accessToken || !result?.user) {
         return res.redirect(`${frontendUrl}/login?error=OAuth+failed`);
       }

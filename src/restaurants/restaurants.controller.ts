@@ -53,12 +53,16 @@ export class RestaurantsController {
     @Query('cuisine') cuisine?: string,
     @Query('location') location?: string,
     @Query('rating') rating?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     return this.restaurantsService.findAll({
       search,
       cuisine,
       location,
       rating,
+      page,
+      limit,
     });
   }
 
@@ -70,8 +74,10 @@ export class RestaurantsController {
     @Query('cuisine') cuisine?: string,
     @Query('location') location?: string,
     @Query('rating') rating?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.restaurantsService.findAll({ search, cuisine, location, rating }, true);
+    return this.restaurantsService.findAll({ search, cuisine, location, rating, page, limit }, true);
   }
 
   @Get('owner/:ownerId')

@@ -26,3 +26,5 @@ export class menu {
 }
 
 export const menuschema = SchemaFactory.createForClass(menu);
+
+menuschema.index({ restaurant: 1, category: 1, _id: 1 });

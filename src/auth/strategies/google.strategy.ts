@@ -60,7 +60,11 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       });
       done(null, result);
     } catch (err) {
-      done(err, false);
+      if (/ACCOUNT_BLOCKED/i.test(err?.message || '')) {
+        done(null, { authError: err.message });
+      } else {
+        done(err, false);
+      }
     }
   }
 }

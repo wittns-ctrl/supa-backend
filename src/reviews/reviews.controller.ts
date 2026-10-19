@@ -29,8 +29,12 @@ export class ReviewsController {
   }
 
   @Get()
-  findAll(@Query('restaurantId') restaurantId?: string) {
-    return this.reviewsService.findAll(restaurantId);
+  findAll(
+    @Query('restaurantId') restaurantId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.reviewsService.findAll(restaurantId, page, limit);
   }
 
   @Get(':id')
