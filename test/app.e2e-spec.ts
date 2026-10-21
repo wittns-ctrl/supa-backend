@@ -5,6 +5,7 @@ import { App } from 'supertest/types';
 import { AppController } from './../src/app.controller';
 import { AppService } from './../src/app.service';
 import { getConnectionToken } from '@nestjs/mongoose';
+import { RedisService } from './../src/redis/redis.service';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
@@ -15,6 +16,10 @@ describe('AppController (e2e)', () => {
       providers: [
         AppService,
         { provide: getConnectionToken(), useValue: { readyState: 1 } },
+        {
+          provide: RedisService,
+          useValue: { isConfigured: false, isReady: false },
+        },
       ],
     }).compile();
 

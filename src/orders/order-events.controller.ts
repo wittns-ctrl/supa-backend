@@ -32,14 +32,14 @@ export class OrderEventsController {
    */
   @Post(':id/ticket')
   @UseGuards(JwtAuthGuard)
-  issueTicket(
+  async issueTicket(
     @Param('id') id: string,
     @CurrentUser() user: { id: string; role: string },
   ) {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid order id');
     }
-    return { ticket: this.tickets.issue(id, user.id, user.role) };
+    return { ticket: await this.tickets.issue(id, user.id, user.role) };
   }
 
   /**
@@ -58,7 +58,7 @@ export class OrderEventsController {
       throw new BadRequestException('Invalid order id');
     }
 
-    const entry = this.tickets.consume(ticket);
+    const entry = await this.tickets.consume(ticket);
     if (!entry || entry.orderId !== id) {
       throw new UnauthorizedException('Invalid or expired stream ticket');
     }
@@ -79,7 +79,7 @@ export class OrderEventsController {
     });
 
     // Catch-up: status changed while connecting → send it immediately
-    const last = this.orderEvents.lastEventFor(id);
+    const last = await this.orderEvents.lastEventFor(id);
     if (last && last.status !== (order as { status?: string }).status) {
       subject.next({ type: 'update', data: last });
     }

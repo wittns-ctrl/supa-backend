@@ -5,6 +5,7 @@ import { restaurant } from 'src/restaurants/schema/restaurant.schema';
 import { User } from 'src/users/schema/user.schema';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { BookingsService } from './bookings.service';
+import { RedisService } from 'src/redis/redis.service';
 
 function mockModel() {
   const chain = {
@@ -48,6 +49,10 @@ describe('BookingsService', () => {
         { provide: getModelToken(restaurant.name), useValue: RestaurantModel },
         { provide: getModelToken(User.name), useValue: UserModel },
         { provide: NotificationsService, useValue: notificationsService },
+        {
+          provide: RedisService,
+          useValue: { isConfigured: false, isReady: false },
+        },
       ],
     }).compile();
 

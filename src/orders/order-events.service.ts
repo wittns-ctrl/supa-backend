@@ -1,4 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationShutdown,
+  OnModuleInit,
+} from '@nestjs/common';
+import Redis from 'ioredis';
+import { randomUUID } from 'crypto';
+import { RedisService } from 'src/redis/redis.service';
 import { OrderStatus } from './schema/order.schema';
 
 export interface OrderEvent {
@@ -9,22 +17,36 @@ export interface OrderEvent {
 }
 
 type OrderListener = (event: OrderEvent) => void;
-
 const MAX_CACHED_EVENTS = 200;
+const EVENT_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-/**
- * In-process pub/sub for order status changes, consumed by the SSE endpoint
- * (GET /orders/:id/stream). `updateStatus` emits here; every connected
- * tracking stream for that order receives the event immediately.
- *
- * Scope note: single-instance deployments. If the API is scaled horizontally,
- * swap the Map for Redis pub/sub — the interface stays the same.
- */
 @Injectable()
-export class OrderEventsService {
+export class OrderEventsService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(OrderEventsService.name);
+  private readonly instanceId = randomUUID();
   private readonly subscribers = new Map<string, Set<OrderListener>>();
-  private readonly lastEvent = new Map<string, OrderEvent>();
+  private readonly lastEvents = new Map<string, OrderEvent>();
+  private redisSubscriber?: Redis;
+
+  constructor(private readonly redis: RedisService) {}
+
+  async onModuleInit() {
+    if (!this.redis.isConfigured) return;
+    this.redisSubscriber = await this.redis.createSubscriber();
+    const channel = this.redis.key('orders:events');
+    this.redisSubscriber.on('message', (receivedChannel, message) => {
+      if (receivedChannel !== channel) return;
+      try {
+        const envelope = JSON.parse(message) as { origin?: string; event?: OrderEvent };
+        if (envelope.origin === this.instanceId || !envelope.event?.orderId) return;
+        this.rememberAndDeliver(envelope.event);
+      } catch (error) {
+        this.logger.warn(`Ignoring malformed Redis order event: ${(error as Error).message}`);
+      }
+    });
+    await this.redisSubscriber.subscribe(channel);
+    this.logger.log('Cross-instance order event subscriber ready.');
+  }
 
   subscribe(orderId: string, listener: OrderListener): () => void {
     let set = this.subscribers.get(orderId);
@@ -39,37 +61,60 @@ export class OrderEventsService {
     };
   }
 
-  /** Publish a status change and remember it so fresh streams can catch up. */
-  emit(orderId: string, status: OrderStatus, eta?: string) {
-    const event: OrderEvent = {
-      orderId,
-      status,
-      eta,
-      updatedAt: new Date().toISOString(),
-    };
+  async emit(orderId: string, status: OrderStatus, eta?: string): Promise<void> {
+    const event: OrderEvent = { orderId, status, eta, updatedAt: new Date().toISOString() };
+    this.rememberAndDeliver(event);
+    if (!this.redis.isConfigured) return;
 
-    if (this.lastEvent.size >= MAX_CACHED_EVENTS) {
-      let n = Math.floor(MAX_CACHED_EVENTS / 2);
-      for (const key of this.lastEvent.keys()) {
-        if (n-- <= 0) break;
-        this.lastEvent.delete(key);
-      }
-    }
-    this.lastEvent.set(orderId, event);
-
-    const set = this.subscribers.get(orderId);
-    if (!set) return;
-    for (const listener of set) {
-      try {
-        listener(event);
-      } catch (err) {
-        this.logger.warn('Order event listener threw', err as Error);
-      }
+    const eventKey = this.redis.key(`orders:last-event:${orderId}`);
+    const channel = this.redis.key('orders:events');
+    const envelope = JSON.stringify({ origin: this.instanceId, event });
+    try {
+      await this.redis.connection.set(eventKey, JSON.stringify(event), 'EX', EVENT_TTL_SECONDS);
+      await this.redis.connection.publish(channel, envelope);
+    } catch (error) {
+      // The order status is persisted in MongoDB; a transient pub/sub failure
+      // should not turn a successful status update into a failed API response.
+      this.logger.warn(`Could not publish order event: ${(error as Error).message}`);
     }
   }
 
-  /** Last event for an order, for streams that connected mid-flight. */
-  lastEventFor(orderId: string): OrderEvent | undefined {
-    return this.lastEvent.get(orderId);
+  async lastEventFor(orderId: string): Promise<OrderEvent | undefined> {
+    if (this.redis.isConfigured) {
+      try {
+        const raw = await this.redis.connection.get(this.redis.key(`orders:last-event:${orderId}`));
+        if (raw) return JSON.parse(raw) as OrderEvent;
+      } catch (error) {
+        this.logger.warn(`Could not load last order event from Redis: ${(error as Error).message}`);
+      }
+    }
+    return this.lastEvents.get(orderId);
+  }
+
+  async onApplicationShutdown() {
+    if (this.redisSubscriber?.status === 'ready') {
+      const channel = this.redis.key('orders:events');
+      await this.redisSubscriber.unsubscribe(channel);
+    }
+  }
+
+  private rememberAndDeliver(event: OrderEvent) {
+    if (this.lastEvents.size >= MAX_CACHED_EVENTS && !this.lastEvents.has(event.orderId)) {
+      let removeCount = Math.floor(MAX_CACHED_EVENTS / 2);
+      for (const key of this.lastEvents.keys()) {
+        if (removeCount-- <= 0) break;
+        this.lastEvents.delete(key);
+      }
+    }
+    this.lastEvents.set(event.orderId, event);
+    const listeners = this.subscribers.get(event.orderId);
+    if (!listeners) return;
+    for (const listener of listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        this.logger.warn(`Order event listener threw: ${(error as Error).message}`);
+      }
+    }
   }
 }

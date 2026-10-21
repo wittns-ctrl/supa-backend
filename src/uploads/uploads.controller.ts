@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -18,6 +19,7 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { roles } from 'src/users/schema/user.schema';
+import { CloudinaryService } from './cloudinary.service';
 
 export const UPLOAD_DIR = resolve(process.env.UPLOAD_DIR || './uploads');
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -52,6 +54,8 @@ const SAFE_FILENAME = /^[a-f0-9-]{36}\.(jpg|png|webp)$/i;
 @Controller('uploads')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class UploadsController {
+  constructor(private readonly cloudinary: CloudinaryService) {}
+
   @Post()
   @Roles(roles.CUSTOMER, roles.OWNER, roles.ADMIN)
   @UseInterceptors(
@@ -78,11 +82,31 @@ export class UploadsController {
     }
 
     // UUID filename — original name never touches the disk
-    await mkdir(UPLOAD_DIR, { recursive: true });
     const filename = `${randomUUID()}.${ext}`;
+    if (this.cloudinary.isConfigured) {
+      const asset = await this.cloudinary.upload(
+        file.buffer,
+        ext,
+        filename.replace(/\.[^.]+$/, ''),
+      );
+      return { url: asset.secure_url, publicId: asset.public_id, size: asset.bytes };
+    }
+
+    await mkdir(UPLOAD_DIR, { recursive: true });
     await writeFile(join(UPLOAD_DIR, filename), file.buffer);
 
     return { url: `/uploads/${filename}`, size: file.size };
+  }
+
+  @Delete()
+  @Roles(roles.OWNER, roles.ADMIN)
+  async removeCloudinary(@Query('publicId') publicId: string) {
+    if (!publicId || !this.cloudinary.isManagedAsset(publicId)) {
+      throw new BadRequestException('Invalid Cloudinary asset id');
+    }
+    const deleted = await this.cloudinary.delete(publicId);
+    if (!deleted) throw new NotFoundException('Image not found');
+    return { message: 'File deleted' };
   }
 
   @Delete(':filename')

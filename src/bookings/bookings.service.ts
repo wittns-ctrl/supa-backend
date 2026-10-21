@@ -8,16 +8,15 @@ import { restaurant, restaurantDocument } from 'src/restaurants/schema/restauran
 import { User, UserDocument } from 'src/users/schema/user.schema';
 import { roles } from 'src/users/schema/user.schema';
 import { NotificationsService } from 'src/notifications/notifications.service';
+import { RedisService } from 'src/redis/redis.service';
 
 // Strict 24-hour HH:MM — the old /^\d{1,2}:\d{2}$/ accepted "99:99"
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 @Injectable()
 export class BookingsService {
-  // Serialize check-then-write per restaurant+date so two concurrent bookings
-  // (or a booking racing an edit) can't both pass the capacity check.
-  // MongoDB standalone has no multi-document transactions, so an in-process
-  // per-key mutex is the simplest correct guard within a single API replica.
+  // Serialize check-then-write per restaurant+date. Configured deployments use
+  // a shared Redis lock; the in-process mutex is only the local-dev fallback.
   private readonly dayLocks = new Map<string, Promise<unknown>>();
 
   private async withDayLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -57,6 +56,7 @@ export class BookingsService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly notificationsService: NotificationsService,
+    private readonly redis: RedisService,
   ) {}
 
   async create(createBookingDto: CreateBookingDto) {
@@ -108,9 +108,8 @@ export class BookingsService {
     // Count confirmed/pending seats for this date — refuse if the restaurant
     // would be over capacity. Locked per restaurant+day so concurrent requests
     // serialize on the read-then-insert.
-    return this.withDayLock(
-      this.dayKey(createBookingDto.restaurantId, bookingDate),
-      async () => {
+    const dayKey = this.dayKey(createBookingDto.restaurantId, bookingDate);
+    const createWithinLock = async () => {
         const seatsTaken = await this.sumActiveSeats({
           restaurantId: createBookingDto.restaurantId,
           bookingDate: {
@@ -141,8 +140,11 @@ export class BookingsService {
         });
 
         return this.formatBooking(created);
-      },
-    );
+    };
+
+    return this.redis.isConfigured
+      ? this.redis.withLock(`booking:${dayKey}`, createWithinLock)
+      : this.withDayLock(dayKey, createWithinLock);
   }
 
   async findAll(customerId?: string, restaurantId?: string, userId?: string, userRole?: string, page = 1, limit = 20) {

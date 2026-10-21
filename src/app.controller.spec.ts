@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { getConnectionToken } from '@nestjs/mongoose';
+import { RedisService } from './redis/redis.service';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -12,6 +13,10 @@ describe('AppController', () => {
       providers: [
         AppService,
         { provide: getConnectionToken(), useValue: { readyState: 1 } },
+        {
+          provide: RedisService,
+          useValue: { isConfigured: false, isReady: false },
+        },
       ],
     }).compile();
 

@@ -21,9 +21,9 @@ import { MailModule } from './mail/mail.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { validateEnv, isProductionEnv } from './config/env.validation';
-
-const THROTTLE_TTL_MS = Number(process.env.THROTTLE_TTL_MS) || 60_000; // milliseconds
-const THROTTLE_LIMIT = Number(process.env.THROTTLE_LIMIT) || 100;
+import { RedisModule } from './redis/redis.module';
+import { RedisService } from './redis/redis.service';
+import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
 
 @Module({
   imports: [
@@ -32,6 +32,7 @@ const THROTTLE_LIMIT = Number(process.env.THROTTLE_LIMIT) || 100;
       envFilePath: '.env',
       validate: validateEnv,
     }),
+    RedisModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -70,15 +71,17 @@ const THROTTLE_LIMIT = Number(process.env.THROTTLE_LIMIT) || 100;
       },
     }),
     ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: () => [
-        {
+      imports: [ConfigModule, RedisModule],
+      inject: [ConfigService, RedisService],
+      useFactory: (configService: ConfigService, redis: RedisService) => {
+        const throttler: any = {
           // @nestjs/throttler v6 expects ttl in MILLISECONDS.
-          ttl: THROTTLE_TTL_MS,
-          limit: THROTTLE_LIMIT,
-        },
-      ],
+          ttl: Number(configService.get('THROTTLE_TTL_MS')) || 60_000,
+          limit: Number(configService.get('THROTTLE_LIMIT')) || 100,
+        };
+        if (redis.isConfigured) throttler.storage = new RedisThrottlerStorage(redis);
+        return [throttler];
+      },
     }),
     AuthModule,
     UsersModule,
@@ -106,6 +109,4 @@ const THROTTLE_LIMIT = Number(process.env.THROTTLE_LIMIT) || 100;
 })
 export class AppModule {
   static readonly isProduction = isProductionEnv();
-  static readonly throttlerTtlMs = THROTTLE_TTL_MS;
-  static readonly throttlerLimit = THROTTLE_LIMIT;
 }

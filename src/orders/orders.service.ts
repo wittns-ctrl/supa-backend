@@ -490,7 +490,7 @@ export class OrdersService {
     });
 
     // Live push to any open SSE tracking streams for this order
-    this.orderEvents.emit(id, status, updated.eta);
+    await this.orderEvents.emit(id, status, updated.eta);
 
     const formatted = this.formatOrder(updated);
     return refundWarning ? { ...formatted, warning: refundWarning } : formatted;
