@@ -38,6 +38,7 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer())
       .get('/health/live')
       .expect(200)
+      .expect('Cache-Control', 'no-store')
       .expect({ status: 'ok' });
   });
 
@@ -45,6 +46,7 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer())
       .get('/health/ready')
       .expect(200)
+      .expect('Cache-Control', 'no-store')
       .expect({ status: 'ready', dependencies: { database: 'connected' } });
   });
 

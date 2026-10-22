@@ -67,7 +67,9 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
         String(blockDuration),
       )) as Array<number | string>;
     } catch {
-      throw new ServiceUnavailableException('Request protection is temporarily unavailable');
+      throw new ServiceUnavailableException(
+        'Request protection is temporarily unavailable',
+      );
     }
 
     return {

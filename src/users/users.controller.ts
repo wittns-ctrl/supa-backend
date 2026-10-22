@@ -15,7 +15,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
-import { roles, UserStatus } from './schema/user.schema';
+import { roles } from './schema/user.schema';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { SetUserStatusDto } from './dto/set-status.dto';
 import { CreateAuthDto } from 'src/auth/dto/signup-auth.dto';
@@ -57,7 +57,12 @@ export class UsersController {
     @Param('restaurantId') restaurantId: string,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.usersService.removeFavorite(id, restaurantId, user.id, user.role);
+    return this.usersService.removeFavorite(
+      id,
+      restaurantId,
+      user.id,
+      user.role,
+    );
   }
 
   @Get(':id/dashboard-stats')

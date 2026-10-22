@@ -1,4 +1,11 @@
-import { IsBoolean, IsMongoId, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsMongoId,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CreateMenuDto {
   @IsMongoId({ message: 'restaurant must be a valid id' })

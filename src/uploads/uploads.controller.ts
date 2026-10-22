@@ -14,7 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { randomUUID } from 'crypto';
 import { access, mkdir, unlink, writeFile } from 'fs/promises';
-import { dirname, join, resolve, sep } from 'path';
+import { join, resolve, sep } from 'path';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
@@ -34,8 +34,14 @@ function sniffImageExt(buf: Buffer): 'jpg' | 'png' | 'webp' | null {
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
   // PNG: 89 50 4E 47 0D 0A 1A 0A
   if (
-    buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
-    buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47 &&
+    buf[4] === 0x0d &&
+    buf[5] === 0x0a &&
+    buf[6] === 0x1a &&
+    buf[7] === 0x0a
   ) {
     return 'png';
   }
@@ -89,7 +95,11 @@ export class UploadsController {
         ext,
         filename.replace(/\.[^.]+$/, ''),
       );
-      return { url: asset.secure_url, publicId: asset.public_id, size: asset.bytes };
+      return {
+        url: asset.secure_url,
+        publicId: asset.public_id,
+        size: asset.bytes,
+      };
     }
 
     await mkdir(UPLOAD_DIR, { recursive: true });

@@ -43,7 +43,11 @@ export class restaurant {
   images!: string[];
   @Prop({ required: true, default: false })
   isApproved!: boolean;
-  @Prop({ type: String, enum: Object.values(RestaurantStatus), default: RestaurantStatus.PENDING })
+  @Prop({
+    type: String,
+    enum: Object.values(RestaurantStatus),
+    default: RestaurantStatus.PENDING,
+  })
   status!: RestaurantStatus;
   @Prop({ default: 'International' })
   cuisine!: string;

@@ -16,8 +16,7 @@ export class AddImagesDto {
   // Accept local upload paths (/uploads/<uuid>.<ext>) or https URLs only
   @Matches(/^(\/uploads\/[a-f0-9-]{36}\.(jpg|png|webp)|https:\/\/.+)$/, {
     each: true,
-    message:
-      'each image must be an uploaded path (/uploads/…) or an https URL',
+    message: 'each image must be an uploaded path (/uploads/…) or an https URL',
   })
   images!: string[];
 }

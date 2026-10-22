@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   Controller,
-  Get,
   Param,
   Post,
   Query,

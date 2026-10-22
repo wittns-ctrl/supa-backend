@@ -7,8 +7,17 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { payment, paymentDocument, Payments, PaymentMethod } from './schema/payments.schema';
-import { order, orderDocument, OrderStatus } from '../orders/schema/order.schema';
+import {
+  payment,
+  paymentDocument,
+  Payments,
+  PaymentMethod,
+} from './schema/payments.schema';
+import {
+  order,
+  orderDocument,
+  OrderStatus,
+} from '../orders/schema/order.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from 'src/mail/mail.service';
 import { randomUUID } from 'crypto';
@@ -29,12 +38,16 @@ export class PaymentsService {
     const env = (process.env.NODE_ENV || 'development').toLowerCase();
     const isProd = env === 'production' || env === 'prod';
     if (isProd && (!this.paypalClientId || !this.paypalClientSecret)) {
-      throw new Error('PAYMENTS_MISCONFIGURED: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are required in production.');
+      throw new Error(
+        'PAYMENTS_MISCONFIGURED: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are required in production.',
+      );
     }
     if (this.paypalClientId && this.paypalClientSecret) {
       this.logger.log(`PayPal configured (${this.paypalEnvironment})`);
     } else {
-      this.logger.warn('PayPal credentials are missing; checkout payments are disabled until PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are configured.');
+      this.logger.warn(
+        'PayPal credentials are missing; checkout payments are disabled until PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are configured.',
+      );
     }
   }
 
@@ -43,7 +56,9 @@ export class PaymentsService {
   }
 
   private get paypalEnvironment(): 'sandbox' | 'live' {
-    return (process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox';
+    return (process.env.PAYPAL_ENV || 'sandbox').toLowerCase() === 'live'
+      ? 'live'
+      : 'sandbox';
   }
 
   private get paypalApiBase(): string {
@@ -54,7 +69,9 @@ export class PaymentsService {
 
   private assertPaypalConfigured() {
     if (!this.paypalClientId || !this.paypalClientSecret) {
-      throw new BadRequestException('PayPal is not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET on the server.');
+      throw new BadRequestException(
+        'PayPal is not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET on the server.',
+      );
     }
   }
 
@@ -65,7 +82,9 @@ export class PaymentsService {
 
   private async paypalRequest(path: string, options: RequestInit = {}) {
     this.assertPaypalConfigured();
-    const credentials = Buffer.from(`${this.paypalClientId}:${this.paypalClientSecret}`).toString('base64');
+    const credentials = Buffer.from(
+      `${this.paypalClientId}:${this.paypalClientSecret}`,
+    ).toString('base64');
     const tokenResponse = await fetch(`${this.paypalApiBase}/v1/oauth2/token`, {
       method: 'POST',
       headers: {
@@ -75,10 +94,14 @@ export class PaymentsService {
       body: 'grant_type=client_credentials',
     });
     if (!tokenResponse.ok) {
-      this.logger.error(`PayPal OAuth failed with status ${tokenResponse.status}`);
-      throw new BadRequestException('Could not authenticate with PayPal. Check the configured API credentials.');
+      this.logger.error(
+        `PayPal OAuth failed with status ${tokenResponse.status}`,
+      );
+      throw new BadRequestException(
+        'Could not authenticate with PayPal. Check the configured API credentials.',
+      );
     }
-    const token = await tokenResponse.json() as { access_token: string };
+    const token = (await tokenResponse.json()) as { access_token: string };
     const response = await fetch(`${this.paypalApiBase}${path}`, {
       ...options,
       headers: {
@@ -89,8 +112,12 @@ export class PaymentsService {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      this.logger.error(`PayPal API ${path} failed with status ${response.status}`);
-      throw new BadRequestException(body?.message || 'PayPal could not process the payment request.');
+      this.logger.error(
+        `PayPal API ${path} failed with status ${response.status}`,
+      );
+      throw new BadRequestException(
+        body?.message || 'PayPal could not process the payment request.',
+      );
     }
     return body as Record<string, any>;
   }
@@ -101,7 +128,11 @@ export class PaymentsService {
     }
   }
 
-  private async loadOrderForUser(orderId: string, userId: string, userRole: string) {
+  private async loadOrderForUser(
+    orderId: string,
+    userId: string,
+    userRole: string,
+  ) {
     this.assertValidOrderId(orderId);
     const order = await this.orderModel
       .findById(orderId)
@@ -109,16 +140,25 @@ export class PaymentsService {
       .exec();
     if (!order) throw new NotFoundException('Order not found');
 
-    const populated = order.customerId as { _id?: Types.ObjectId } | Types.ObjectId | null | undefined;
+    const populated = order.customerId as
+      | { _id?: Types.ObjectId }
+      | Types.ObjectId
+      | null
+      | undefined;
     const customerId =
-      populated && typeof populated === 'object' && '_id' in populated && populated._id
+      populated &&
+      typeof populated === 'object' &&
+      '_id' in populated &&
+      populated._id
         ? populated._id.toString()
         : populated
           ? String(populated)
           : '';
 
     if (userRole !== roles.ADMIN && (!customerId || customerId !== userId)) {
-      throw new UnauthorizedException('You are not authorized to pay for this order');
+      throw new UnauthorizedException(
+        'You are not authorized to pay for this order',
+      );
     }
     return order;
   }
@@ -128,14 +168,19 @@ export class PaymentsService {
     const amount = Number(order.total) || 0;
     if (amount <= 0) throw new BadRequestException('Invalid order total');
     if (order.status !== OrderStatus.PENDING) {
-      throw new BadRequestException(`Order is not payable in its current status (${order.status})`);
+      throw new BadRequestException(
+        `Order is not payable in its current status (${order.status})`,
+      );
     }
 
-    const existingPending = await this.paymentModel.findOne({
-      orderId: order._id,
-      status: Payments.PENDING,
-      method: PaymentMethod.PAYPAL,
-    }).sort({ createdAt: -1 }).exec();
+    const existingPending = await this.paymentModel
+      .findOne({
+        orderId: order._id,
+        status: Payments.PENDING,
+        method: PaymentMethod.PAYPAL,
+      })
+      .sort({ createdAt: -1 })
+      .exec();
     if (existingPending?.paymentIntentId) {
       return {
         paypalOrderId: existingPending.paymentIntentId,
@@ -151,11 +196,13 @@ export class PaymentsService {
       headers: { 'PayPal-Request-Id': `supameal-${order.id}-${Date.now()}` },
       body: JSON.stringify({
         intent: 'CAPTURE',
-        purchase_units: [{
-          reference_id: order.id,
-          custom_id: order.id,
-          amount: { currency_code: this.currency, value: amount.toFixed(2) },
-        }],
+        purchase_units: [
+          {
+            reference_id: order.id,
+            custom_id: order.id,
+            amount: { currency_code: this.currency, value: amount.toFixed(2) },
+          },
+        ],
         application_context: {
           user_action: 'PAY_NOW',
           return_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/customer/dashboard?tab=checkout`,
@@ -163,7 +210,10 @@ export class PaymentsService {
         },
       }),
     });
-    if (!paypalOrder.id) throw new BadRequestException('PayPal did not return an order reference.');
+    if (!paypalOrder.id)
+      throw new BadRequestException(
+        'PayPal did not return an order reference.',
+      );
 
     await this.paymentModel.create({
       orderId: order._id,
@@ -183,61 +233,117 @@ export class PaymentsService {
     };
   }
 
-  async capturePaypalOrder(paypalOrderId: string, userId: string, userRole: string) {
-    const record = await this.paymentModel.findOne({
-      paymentIntentId: paypalOrderId,
-      method: PaymentMethod.PAYPAL,
-    }).exec();
-    if (!record?.orderId) throw new NotFoundException('PayPal payment record not found');
-    const order = await this.loadOrderForUser(record.orderId.toString(), userId, userRole);
+  async capturePaypalOrder(
+    paypalOrderId: string,
+    userId: string,
+    userRole: string,
+  ) {
+    const record = await this.paymentModel
+      .findOne({
+        paymentIntentId: paypalOrderId,
+        method: PaymentMethod.PAYPAL,
+      })
+      .exec();
+    if (!record?.orderId)
+      throw new NotFoundException('PayPal payment record not found');
+    const order = await this.loadOrderForUser(
+      record.orderId.toString(),
+      userId,
+      userRole,
+    );
 
     if (record.status === Payments.PAID) {
-      return { success: true, paymentStatus: 'succeeded', orderId: order.id, status: order.status, amount: Number(record.amount) };
+      return {
+        success: true,
+        paymentStatus: 'succeeded',
+        orderId: order.id,
+        status: order.status,
+        amount: Number(record.amount),
+      };
     }
-    if (record.status !== Payments.PENDING) throw new BadRequestException('This PayPal payment is not pending.');
+    if (record.status !== Payments.PENDING)
+      throw new BadRequestException('This PayPal payment is not pending.');
     if (order.status !== OrderStatus.PENDING) {
-      throw new BadRequestException(`Order is no longer payable (${order.status}); PayPal has not been captured.`);
+      throw new BadRequestException(
+        `Order is no longer payable (${order.status}); PayPal has not been captured.`,
+      );
     }
 
     let captured: Record<string, any>;
     try {
-      captured = await this.paypalRequest(`/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}/capture`, {
-        method: 'POST',
-        headers: { 'PayPal-Request-Id': `capture-${paypalOrderId}` },
-        body: '{}',
-      });
+      captured = await this.paypalRequest(
+        `/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}/capture`,
+        {
+          method: 'POST',
+          headers: { 'PayPal-Request-Id': `capture-${paypalOrderId}` },
+          body: '{}',
+        },
+      );
     } catch (captureError) {
       // Recover when PayPal captured successfully but the response was lost.
       // The stored PayPal order ID is server-created and already bound to this local order.
-      captured = await this.paypalRequest(`/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}`);
+      captured = await this.paypalRequest(
+        `/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}`,
+      );
       if (captured.status !== 'COMPLETED') throw captureError;
     }
     const capture = captured.purchase_units?.[0]?.payments?.captures?.[0];
     const capturedAmount = Number(capture?.amount?.value);
-    const capturedCurrency = String(capture?.amount?.currency_code || '').toUpperCase();
+    const capturedCurrency = String(
+      capture?.amount?.currency_code || '',
+    ).toUpperCase();
     if (captured.status !== 'COMPLETED' || !capture?.id) {
       throw new BadRequestException('PayPal has not completed this payment.');
     }
-    if (capturedAmount !== Number(record.amount) || capturedCurrency !== String(record.currency || this.currency).toUpperCase()) {
+    if (
+      capturedAmount !== Number(record.amount) ||
+      capturedCurrency !==
+        String(record.currency || this.currency).toUpperCase()
+    ) {
       this.logger.error(`PayPal amount mismatch for order ${order.id}`);
-      throw new BadRequestException('PayPal captured an amount that does not match this order. Contact support before retrying.');
+      throw new BadRequestException(
+        'PayPal captured an amount that does not match this order. Contact support before retrying.',
+      );
     }
 
-    const applied = await this._applyPaid(order.id, paypalOrderId, capturedAmount, capture.id);
+    const applied = await this._applyPaid(
+      order.id,
+      paypalOrderId,
+      capturedAmount,
+      capture.id,
+    );
     await this.paymentModel.updateOne(
       { _id: record._id },
-      { $set: { transactionId: capture.id, currency: capturedCurrency, status: Payments.PAID } },
+      {
+        $set: {
+          transactionId: capture.id,
+          currency: capturedCurrency,
+          status: Payments.PAID,
+        },
+      },
     );
     await this.sendPaymentReceipt(order.id, capturedAmount, capturedCurrency);
-    return { success: true, paymentStatus: 'succeeded', captureId: capture.id, ...applied };
+    return {
+      success: true,
+      paymentStatus: 'succeeded',
+      captureId: capture.id,
+      ...applied,
+    };
   }
-  private async _applyPaid(orderId: string, paymentIntentId: string, amount: number, transactionId = paymentIntentId) {
+  private async _applyPaid(
+    orderId: string,
+    paymentIntentId: string,
+    amount: number,
+    transactionId = paymentIntentId,
+  ) {
     const order = await this.orderModel.findById(orderId);
     if (!order) throw new NotFoundException('Order not found');
 
     await this.paymentModel.updateOne(
       { paymentIntentId },
-      { $set: { status: Payments.PAID, transactionId: paymentIntentId, amount } },
+      {
+        $set: { status: Payments.PAID, transactionId: paymentIntentId, amount },
+      },
       { upsert: false },
     );
 
@@ -287,7 +393,9 @@ export class PaymentsService {
    * order is cancelled. Idempotent: skips orders whose latest payment is
    * already refunded and reports provider failures to the caller.
    */
-  async refundOrderPayment(orderId: string): Promise<{ refunded: boolean; reason?: string }> {
+  async refundOrderPayment(
+    orderId: string,
+  ): Promise<{ refunded: boolean; reason?: string }> {
     this.assertValidOrderId(orderId);
     const record = await this.paymentModel
       .findOne({ orderId: new Types.ObjectId(orderId), status: Payments.PAID })
@@ -295,47 +403,71 @@ export class PaymentsService {
       .exec();
     if (!record) return { refunded: false, reason: 'no paid payment found' };
     if (record.method !== PaymentMethod.PAYPAL || !record.transactionId) {
-      return { refunded: false, reason: 'PayPal capture reference is unavailable' };
+      return {
+        refunded: false,
+        reason: 'PayPal capture reference is unavailable',
+      };
     }
     try {
-      const refund = await this.paypalRequest(`/v2/payments/captures/${encodeURIComponent(record.transactionId)}/refund`, {
-        method: 'POST',
-        headers: { 'PayPal-Request-Id': `refund-${record.transactionId}` },
-        body: JSON.stringify({}),
-      });
+      const refund = await this.paypalRequest(
+        `/v2/payments/captures/${encodeURIComponent(record.transactionId)}/refund`,
+        {
+          method: 'POST',
+          headers: { 'PayPal-Request-Id': `refund-${record.transactionId}` },
+          body: JSON.stringify({}),
+        },
+      );
       if (refund.status !== 'COMPLETED') {
-        return { refunded: false, reason: `PayPal refund status is ${refund.status || 'unknown'}` };
+        return {
+          refunded: false,
+          reason: `PayPal refund status is ${refund.status || 'unknown'}`,
+        };
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       this.logger.error(`Refund failed for order ${orderId}`, err as Error);
       return { refunded: false, reason };
     }
-    await this.paymentModel.updateOne({ _id: record._id }, { $set: { status: Payments.REFUNDED } });
+    await this.paymentModel.updateOne(
+      { _id: record._id },
+      { $set: { status: Payments.REFUNDED } },
+    );
     return { refunded: true };
   }
-  private async sendPaymentReceipt(orderId: string, amount: number, currency: string) {
+  private async sendPaymentReceipt(
+    orderId: string,
+    amount: number,
+    currency: string,
+  ) {
     try {
-      const order = await this.orderModel.findById(orderId).populate('customerId', 'email').exec();
-      const email = typeof order?.customerId === 'object'
-        ? (order.customerId as { email?: string }).email
-        : undefined;
+      const order = await this.orderModel
+        .findById(orderId)
+        .populate('customerId', 'email')
+        .exec();
+      const email =
+        typeof order?.customerId === 'object'
+          ? (order.customerId as { email?: string }).email
+          : undefined;
       if (!email) return;
       await this.mailservice.sendPaymentReceipt({
         to: email,
         orderId,
         amount,
         currency: currency.toLowerCase(),
-        itemsSummary: order?.items?.map((item) => `${item.name} ×${item.qty}`).join(', '),
+        itemsSummary: order?.items
+          ?.map((item) => `${item.name} ×${item.qty}`)
+          .join(', '),
       });
     } catch (err) {
       this.logger.warn('Payment receipt email failed', err as Error);
     }
   }
   create(createPaymentDto: Partial<payment>) {
-    if (!createPaymentDto.transactionId) createPaymentDto.transactionId = randomUUID();
+    if (!createPaymentDto.transactionId)
+      createPaymentDto.transactionId = randomUUID();
     if (!createPaymentDto.status) createPaymentDto.status = Payments.PENDING;
-    if (!createPaymentDto.method) createPaymentDto.method = PaymentMethod.PAYPAL;
+    if (!createPaymentDto.method)
+      createPaymentDto.method = PaymentMethod.PAYPAL;
     return this.paymentModel.create(createPaymentDto);
   }
 

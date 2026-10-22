@@ -21,7 +21,10 @@ describe('AuthController', () => {
       providers: [
         { provide: AuthService, useValue: mockSvc },
         { provide: AppleAuthService, useValue: {} },
-        { provide: OAuthStateService, useValue: { issue: jest.fn(), consume: jest.fn() } },
+        {
+          provide: OAuthStateService,
+          useValue: { issue: jest.fn(), consume: jest.fn() },
+        },
         { provide: getModelToken(OAuthCodeRecord.name), useValue: {} },
       ],
     }).compile();

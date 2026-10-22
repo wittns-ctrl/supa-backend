@@ -5,14 +5,18 @@ export type menuDocument = menu & Document;
 
 @Schema({ timestamps: true })
 export class menu {
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'restaurant', required: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'restaurant',
+    required: true,
+  })
   restaurant!: Types.ObjectId;
   @Prop({ required: true })
   name!: string;
   @Prop({ required: true })
   description!: string;
   @Prop({ required: true })
-  price!: Number;
+  price!: number;
   @Prop({ required: true })
   category!: string;
   @Prop({ required: true })

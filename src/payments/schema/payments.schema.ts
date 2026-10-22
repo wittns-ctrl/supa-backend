@@ -23,10 +23,14 @@ export class payment {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'order', index: true })
   orderId?: Types.ObjectId;
   @Prop({ required: true })
-  amount!: Number;
+  amount!: number;
   @Prop({ type: String, enum: Object.values(Payments), required: true })
   status!: Payments;
-  @Prop({ type: String, enum: Object.values(PaymentMethod), default: PaymentMethod.PAYPAL })
+  @Prop({
+    type: String,
+    enum: Object.values(PaymentMethod),
+    default: PaymentMethod.PAYPAL,
+  })
   method?: PaymentMethod;
   @Prop({ index: true })
   transactionId?: string;

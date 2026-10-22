@@ -4,7 +4,10 @@ import { OrdersController } from './orders.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { order, orderSchema } from './schema/order.schema';
 import { menu, menuschema } from 'src/menus/schema/menu.schema';
-import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantSchema,
+} from 'src/restaurants/schema/restaurant.schema';
 import { payment, paymentschema } from 'src/payments/schema/payments.schema';
 import { NotificationsModule } from 'src/notifications/notifications.module';
 import { AuthModule } from 'src/auth/auth.module';

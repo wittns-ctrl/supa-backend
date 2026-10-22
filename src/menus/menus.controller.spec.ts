@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { MenusController } from './menus.controller';
 import { MenusService } from './menus.service';
 
-
 describe('MenusController', () => {
   let controller: MenusController;
 
@@ -14,10 +13,7 @@ describe('MenusController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MenusController],
-      providers: [
-        { provide: MenusService, useValue: mockSvc },
-
-      ],
+      providers: [{ provide: MenusService, useValue: mockSvc }],
     }).compile();
 
     controller = module.get<MenusController>(MenusController);

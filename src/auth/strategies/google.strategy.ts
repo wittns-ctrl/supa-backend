@@ -13,8 +13,10 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     configService: ConfigService,
     private readonly authService: AuthService,
   ) {
-    const clientID = configService.get<string>('GOOGLE_CLIENT_ID')?.trim() || '';
-    const clientSecret = configService.get<string>('GOOGLE_CLIENT_SECRET')?.trim() || '';
+    const clientID =
+      configService.get<string>('GOOGLE_CLIENT_ID')?.trim() || '';
+    const clientSecret =
+      configService.get<string>('GOOGLE_CLIENT_SECRET')?.trim() || '';
     const callbackURL =
       configService.get<string>('GOOGLE_CALLBACK_URL')?.trim() ||
       'http://localhost:3000/auth/google/callback';
@@ -44,7 +46,8 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     const { name, emails, photos } = profile;
     const email = emails?.[0]?.value;
     const emailVerified = profile?._json?.email_verified === true;
-    const displayName = `${name?.givenName || ''} ${name?.familyName || ''}`.trim();
+    const displayName =
+      `${name?.givenName || ''} ${name?.familyName || ''}`.trim();
     const imageurl = photos?.[0]?.value;
 
     try {

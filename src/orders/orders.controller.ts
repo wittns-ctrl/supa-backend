@@ -8,7 +8,6 @@ import {
   Param,
   Query,
   UseGuards,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -29,7 +28,10 @@ export class OrdersController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(roles.CUSTOMER)
-  create(@Body() createOrderDto: CreateOrderDto, @CurrentUser() user: { id: string; role: string }) {
+  create(
+    @Body() createOrderDto: CreateOrderDto,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
     return this.ordersService.create(createOrderDto, user.id, user.role);
   }
 
@@ -46,26 +48,51 @@ export class OrdersController {
     const { page: p, limit: l } = parsePagination({ page, limit });
 
     if (role === roles.ADMIN) {
-      return this.ordersService.findAll(customerId, restaurantId, user!.id, role, p, l);
+      return this.ordersService.findAll(
+        customerId,
+        restaurantId,
+        user!.id,
+        role,
+        p,
+        l,
+      );
     }
     if (view === 'owner' && userHasRole(user, roles.OWNER)) {
       // Owners are scoped to their own restaurants inside the service.
-      return this.ordersService.findAll(customerId, restaurantId, user!.id, roles.OWNER, p, l);
+      return this.ordersService.findAll(
+        customerId,
+        restaurantId,
+        user!.id,
+        roles.OWNER,
+        p,
+        l,
+      );
     }
     // Customers are always scoped to their own orders — query params ignored.
-    return this.ordersService.findAll(undefined, undefined, user!.id, role, p, l);
+    return this.ordersService.findAll(
+      undefined,
+      undefined,
+      user!.id,
+      role,
+      p,
+      l,
+    );
   }
 
   @Get(':id/tracking')
-  getTracking(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.ordersService.getTracking(id, user.id, (user as any).roles?.join(',') ?? user.role);
+  getTracking(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.ordersService.getTracking(
+      id,
+      user.id,
+      (user as any).roles?.join(',') ?? user.role,
+    );
   }
 
   @Post(':id/reorder')
-  reorder(
-    @Param('id') id: string,
-    @CurrentUser() user: { id: string },
-  ) {
+  reorder(@Param('id') id: string, @CurrentUser() user: { id: string }) {
     return this.ordersService.reorder(id, user.id);
   }
 
@@ -80,8 +107,15 @@ export class OrdersController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.ordersService.findOne(id, user.id, (user as any).roles?.join(',') ?? user.role);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.ordersService.findOne(
+      id,
+      user.id,
+      (user as any).roles?.join(',') ?? user.role,
+    );
   }
 
   @Patch(':id/status')
@@ -92,6 +126,11 @@ export class OrdersController {
     @Body() body: { status: OrderStatus },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.ordersService.updateStatus(id, body.status, user.id, (user as any).roles?.join(',') ?? user.role);
+    return this.ordersService.updateStatus(
+      id,
+      body.status,
+      user.id,
+      (user as any).roles?.join(',') ?? user.role,
+    );
   }
 }

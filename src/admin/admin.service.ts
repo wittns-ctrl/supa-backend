@@ -1,10 +1,26 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurants/schema/restaurant.schema';
-import { User, UserDocument, roles, UserStatus } from 'src/users/schema/user.schema';
-import { order, orderDocument, OrderStatus } from 'src/orders/schema/order.schema';
-import { bookings, bookingsDocument } from 'src/bookings/schema/bookings.schema';
+import {
+  restaurant,
+  restaurantDocument,
+  RestaurantStatus,
+} from 'src/restaurants/schema/restaurant.schema';
+import {
+  User,
+  UserDocument,
+  roles,
+  UserStatus,
+} from 'src/users/schema/user.schema';
+import {
+  order,
+  orderDocument,
+  OrderStatus,
+} from 'src/orders/schema/order.schema';
+import {
+  bookings,
+  bookingsDocument,
+} from 'src/bookings/schema/bookings.schema';
 import { review, reviewDocument } from 'src/reviews/schema/review.schema';
 import {
   PlatformSettings,
@@ -21,14 +37,13 @@ const ALLOWED_SETTINGS_FIELDS = [
   'maxRestaurantsPerOwner',
 ] as const;
 
-const ALLOWED_MAINTENANCE_ACTIONS = new Set([
-  'recalculate-ratings',
-]);
+const ALLOWED_MAINTENANCE_ACTIONS = new Set(['recalculate-ratings']);
 
 @Injectable()
 export class AdminService {
   constructor(
-    @InjectModel(restaurant.name) private restaurantModel: Model<restaurantDocument>,
+    @InjectModel(restaurant.name)
+    private restaurantModel: Model<restaurantDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(order.name) private orderModel: Model<orderDocument>,
     @InjectModel(bookings.name) private bookingsModel: Model<bookingsDocument>,
@@ -63,12 +78,16 @@ export class AdminService {
       this.orderModel.countDocuments(),
       this.bookingsModel.countDocuments(),
       this.orderModel.countDocuments({ status: OrderStatus.PENDING }),
-      this.orderModel.countDocuments({ status: { $in: [OrderStatus.CANCELLED, OrderStatus.REJECTED] } }),
+      this.orderModel.countDocuments({
+        status: { $in: [OrderStatus.CANCELLED, OrderStatus.REJECTED] },
+      }),
     ]);
 
     // Aggregation instead of loading every delivered order into memory
     const revenueAgg = await this.orderModel
-      .aggregate<{ total: number }>([
+      .aggregate<{
+        total: number;
+      }>([
         { $match: { status: OrderStatus.DELIVERED } },
         { $group: { _id: null, total: { $sum: '$total' } } },
       ])
@@ -87,7 +106,9 @@ export class AdminService {
       pendingOrders,
       cancelledOrders,
       totalRevenue,
-      blockedUsers: await this.userModel.countDocuments({ status: UserStatus.BLOCKED }),
+      blockedUsers: await this.userModel.countDocuments({
+        status: UserStatus.BLOCKED,
+      }),
     };
   }
 
@@ -96,7 +117,7 @@ export class AdminService {
     const now = new Date();
     let startDate: Date;
     let groupId: Record<string, any>;
-    let sortDir: 1 | -1 = 1;
+    const sortDir: 1 | -1 = 1;
 
     if (period === 'week') {
       startDate = new Date(now);
@@ -117,7 +138,11 @@ export class AdminService {
     }
 
     const agg = await this.orderModel
-      .aggregate<{ _id: { year: number; month: number; day?: number }; revenue: number; orders: number }>([
+      .aggregate<{
+        _id: { year: number; month: number; day?: number };
+        revenue: number;
+        orders: number;
+      }>([
         {
           $match: {
             status: OrderStatus.DELIVERED,
@@ -131,7 +156,13 @@ export class AdminService {
             orders: { $sum: 1 },
           },
         },
-        { $sort: { '_id.year': sortDir, '_id.month': sortDir, '_id.day': sortDir } },
+        {
+          $sort: {
+            '_id.year': sortDir,
+            '_id.month': sortDir,
+            '_id.day': sortDir,
+          },
+        },
       ])
       .exec();
 
@@ -160,7 +191,8 @@ export class AdminService {
       for (let i = 11; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const match = agg.find(
-          (a) => a._id.year === d.getFullYear() && a._id.month === d.getMonth() + 1,
+          (a) =>
+            a._id.year === d.getFullYear() && a._id.month === d.getMonth() + 1,
         );
         points.push({
           label: d.toLocaleString('en-US', { month: 'short' }),
@@ -199,7 +231,9 @@ export class AdminService {
     if (!settings) {
       settings = await this.settingsModel.create(patch);
     } else {
-      settings = await this.settingsModel.findOneAndUpdate({}, patch, { returnDocument: 'after' });
+      settings = await this.settingsModel.findOneAndUpdate({}, patch, {
+        returnDocument: 'after',
+      });
     }
     return settings;
   }
@@ -212,22 +246,40 @@ export class AdminService {
       );
     }
 
-    const ratings = await this.reviewModel.aggregate<{
-      _id: Types.ObjectId;
-      averageRating: number;
-      reviewCount: number;
-    }>([
-      { $group: { _id: '$restaurantId', averageRating: { $avg: '$rating' }, reviewCount: { $sum: 1 } } },
-    ]).exec();
-
-    await this.restaurantModel.updateMany({}, { $set: { rating: 0, reviewCount: 0 } });
-    if (ratings.length) {
-      await this.restaurantModel.bulkWrite(ratings.map((entry) => ({
-        updateOne: {
-          filter: { _id: entry._id },
-          update: { $set: { rating: Math.round(entry.averageRating * 10) / 10, reviewCount: entry.reviewCount } },
+    const ratings = await this.reviewModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        averageRating: number;
+        reviewCount: number;
+      }>([
+        {
+          $group: {
+            _id: '$restaurantId',
+            averageRating: { $avg: '$rating' },
+            reviewCount: { $sum: 1 },
+          },
         },
-      })));
+      ])
+      .exec();
+
+    await this.restaurantModel.updateMany(
+      {},
+      { $set: { rating: 0, reviewCount: 0 } },
+    );
+    if (ratings.length) {
+      await this.restaurantModel.bulkWrite(
+        ratings.map((entry) => ({
+          updateOne: {
+            filter: { _id: entry._id },
+            update: {
+              $set: {
+                rating: Math.round(entry.averageRating * 10) / 10,
+                reviewCount: entry.reviewCount,
+              },
+            },
+          },
+        })),
+      );
     }
     const affected = ratings.length;
 

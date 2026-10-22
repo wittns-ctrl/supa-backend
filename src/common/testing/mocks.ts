@@ -8,7 +8,15 @@ export function makeMockModel(methods: string[] = []) {
     impl[m] = jest.fn();
   }
   // Chainable query helpers
-  for (const m of ['find', 'findOne', 'findById', 'findOneAndUpdate', 'findOneAndDelete', 'findByIdAndUpdate', 'findByIdAndDelete']) {
+  for (const m of [
+    'find',
+    'findOne',
+    'findById',
+    'findOneAndUpdate',
+    'findOneAndDelete',
+    'findByIdAndUpdate',
+    'findByIdAndDelete',
+  ]) {
     if (!impl[m]) impl[m] = jest.fn(() => mockQuery);
   }
   const mockQuery: any = {
@@ -32,4 +40,8 @@ export function makeMockModel(methods: string[] = []) {
   return impl;
 }
 
-export const MOCK_ROLES = { CUSTOMER: 'customer', OWNER: 'owner', ADMIN: 'admin' };
+export const MOCK_ROLES = {
+  CUSTOMER: 'customer',
+  OWNER: 'owner',
+  ADMIN: 'admin',
+};

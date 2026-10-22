@@ -37,11 +37,17 @@ export class OrderEventsService implements OnModuleInit, OnApplicationShutdown {
     this.redisSubscriber.on('message', (receivedChannel, message) => {
       if (receivedChannel !== channel) return;
       try {
-        const envelope = JSON.parse(message) as { origin?: string; event?: OrderEvent };
-        if (envelope.origin === this.instanceId || !envelope.event?.orderId) return;
+        const envelope = JSON.parse(message) as {
+          origin?: string;
+          event?: OrderEvent;
+        };
+        if (envelope.origin === this.instanceId || !envelope.event?.orderId)
+          return;
         this.rememberAndDeliver(envelope.event);
       } catch (error) {
-        this.logger.warn(`Ignoring malformed Redis order event: ${(error as Error).message}`);
+        this.logger.warn(
+          `Ignoring malformed Redis order event: ${(error as Error).message}`,
+        );
       }
     });
     await this.redisSubscriber.subscribe(channel);
@@ -56,13 +62,22 @@ export class OrderEventsService implements OnModuleInit, OnApplicationShutdown {
     }
     set.add(listener);
     return () => {
-      set!.delete(listener);
-      if (set!.size === 0) this.subscribers.delete(orderId);
+      set.delete(listener);
+      if (set.size === 0) this.subscribers.delete(orderId);
     };
   }
 
-  async emit(orderId: string, status: OrderStatus, eta?: string): Promise<void> {
-    const event: OrderEvent = { orderId, status, eta, updatedAt: new Date().toISOString() };
+  async emit(
+    orderId: string,
+    status: OrderStatus,
+    eta?: string,
+  ): Promise<void> {
+    const event: OrderEvent = {
+      orderId,
+      status,
+      eta,
+      updatedAt: new Date().toISOString(),
+    };
     this.rememberAndDeliver(event);
     if (!this.redis.isConfigured) return;
 
@@ -70,22 +85,33 @@ export class OrderEventsService implements OnModuleInit, OnApplicationShutdown {
     const channel = this.redis.key('orders:events');
     const envelope = JSON.stringify({ origin: this.instanceId, event });
     try {
-      await this.redis.connection.set(eventKey, JSON.stringify(event), 'EX', EVENT_TTL_SECONDS);
+      await this.redis.connection.set(
+        eventKey,
+        JSON.stringify(event),
+        'EX',
+        EVENT_TTL_SECONDS,
+      );
       await this.redis.connection.publish(channel, envelope);
     } catch (error) {
       // The order status is persisted in MongoDB; a transient pub/sub failure
       // should not turn a successful status update into a failed API response.
-      this.logger.warn(`Could not publish order event: ${(error as Error).message}`);
+      this.logger.warn(
+        `Could not publish order event: ${(error as Error).message}`,
+      );
     }
   }
 
   async lastEventFor(orderId: string): Promise<OrderEvent | undefined> {
     if (this.redis.isConfigured) {
       try {
-        const raw = await this.redis.connection.get(this.redis.key(`orders:last-event:${orderId}`));
+        const raw = await this.redis.connection.get(
+          this.redis.key(`orders:last-event:${orderId}`),
+        );
         if (raw) return JSON.parse(raw) as OrderEvent;
       } catch (error) {
-        this.logger.warn(`Could not load last order event from Redis: ${(error as Error).message}`);
+        this.logger.warn(
+          `Could not load last order event from Redis: ${(error as Error).message}`,
+        );
       }
     }
     return this.lastEvents.get(orderId);
@@ -99,7 +125,10 @@ export class OrderEventsService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private rememberAndDeliver(event: OrderEvent) {
-    if (this.lastEvents.size >= MAX_CACHED_EVENTS && !this.lastEvents.has(event.orderId)) {
+    if (
+      this.lastEvents.size >= MAX_CACHED_EVENTS &&
+      !this.lastEvents.has(event.orderId)
+    ) {
       let removeCount = Math.floor(MAX_CACHED_EVENTS / 2);
       for (const key of this.lastEvents.keys()) {
         if (removeCount-- <= 0) break;
@@ -113,7 +142,9 @@ export class OrderEventsService implements OnModuleInit, OnApplicationShutdown {
       try {
         listener(event);
       } catch (error) {
-        this.logger.warn(`Order event listener threw: ${(error as Error).message}`);
+        this.logger.warn(
+          `Order event listener threw: ${(error as Error).message}`,
+        );
       }
     }
   }

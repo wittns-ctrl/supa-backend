@@ -3,7 +3,10 @@ import { ReviewsService } from './reviews.service';
 import { ReviewsController } from './reviews.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { review, reviewschema } from './schema/review.schema';
-import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantSchema,
+} from 'src/restaurants/schema/restaurant.schema';
 import { order, orderSchema } from 'src/orders/schema/order.schema';
 import { AuthModule } from 'src/auth/auth.module';
 

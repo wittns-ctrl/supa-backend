@@ -24,9 +24,7 @@ function parseCorsOrigins(): (string | RegExp)[] {
     .map((s) => s.trim())
     .filter(Boolean)
     .map((s) =>
-      s.startsWith('/') && s.endsWith('/')
-        ? new RegExp(s.slice(1, -1))
-        : s,
+      s.startsWith('/') && s.endsWith('/') ? new RegExp(s.slice(1, -1)) : s,
     );
 
   if (isProd && isDefault) {
@@ -97,11 +95,7 @@ async function bootstrap() {
               'https://accounts.google.com',
               'https://appleid.apple.com',
             ],
-            'child-src': [
-              "'self'",
-              '*.paypal.com',
-              '*.paypalobjects.com',
-            ],
+            'child-src': ["'self'", '*.paypal.com', '*.paypalobjects.com'],
             'connect-src': [
               "'self'",
               '*.paypal.com',
@@ -178,15 +172,18 @@ async function bootstrap() {
   // (default), or an integer hop count / comma-separated IPs for chained proxies.
   const trustProxy = process.env.TRUST_PROXY ?? 'loopback';
   if (trustProxy.toLowerCase() !== 'false') {
-    app.set('trust proxy',
+    app.set(
+      'trust proxy',
       /^-?\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy,
     );
     logger.log(`Trust proxy enabled: ${trustProxy}`);
   }
 
   const port = Number(process.env.PORT) || 3000;
-  await app.listen(port);
-  logger.log(`🚀 SupaMeal API listening on port ${port} (${isProd ? 'production' : 'development'})`);
+  await app.listen(port,'0.0.0.0');
+  logger.log(
+    `🚀 SupaMeal API listening on port ${port} (${isProd ? 'production' : 'development'})`,
+  );
 }
 
 void bootstrap();

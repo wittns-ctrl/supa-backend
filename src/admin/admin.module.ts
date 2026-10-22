@@ -2,7 +2,10 @@ import { Module } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { AdminController } from './admin.controller';
 import { MongooseModule } from '@nestjs/mongoose';
-import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantSchema,
+} from 'src/restaurants/schema/restaurant.schema';
 import { User, Userschema } from 'src/users/schema/user.schema';
 import { order, orderSchema } from 'src/orders/schema/order.schema';
 import { bookings, bookingschema } from 'src/bookings/schema/bookings.schema';

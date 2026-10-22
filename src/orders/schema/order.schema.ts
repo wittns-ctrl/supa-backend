@@ -56,9 +56,19 @@ export type orderDocument = order & Document;
 
 @Schema({ timestamps: true })
 export class order {
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true,
+  })
   customerId!: Types.ObjectId;
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'restaurant', required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'restaurant',
+    required: true,
+    index: true,
+  })
   restaurantId!: Types.ObjectId;
   @Prop({ type: [OrderItem], required: true })
   items!: OrderItem[];
@@ -74,7 +84,12 @@ export class order {
   discount!: number;
   @Prop({ required: true })
   total!: number;
-  @Prop({ type: String, enum: Object.values(OrderStatus), default: OrderStatus.PENDING, index: true })
+  @Prop({
+    type: String,
+    enum: Object.values(OrderStatus),
+    default: OrderStatus.PENDING,
+    index: true,
+  })
   status!: OrderStatus;
   @Prop({ default: '25-35 min' })
   eta!: string;

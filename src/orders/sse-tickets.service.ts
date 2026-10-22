@@ -26,7 +26,11 @@ export class SseTicketsService {
 
   constructor(private readonly redis: RedisService) {}
 
-  async issue(orderId: string, userId: string, userRole: string): Promise<string> {
+  async issue(
+    orderId: string,
+    userId: string,
+    userRole: string,
+  ): Promise<string> {
     // Bound memory against ticket flooding
     if (this.tickets.size >= 5000) {
       const now = Date.now();
@@ -50,7 +54,10 @@ export class SseTicketsService {
         TICKET_TTL_MS,
         'NX',
       );
-      if (stored !== 'OK') throw new ServiceUnavailableException('Unable to issue order tracking ticket');
+      if (stored !== 'OK')
+        throw new ServiceUnavailableException(
+          'Unable to issue order tracking ticket',
+        );
     } else {
       this.tickets.set(ticket, entry);
     }

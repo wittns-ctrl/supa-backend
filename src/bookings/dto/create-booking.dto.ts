@@ -26,7 +26,9 @@ export class CreateBookingDto {
   bookingDate!: string;
 
   @IsNotEmpty()
-  @Matches(/^\d{1,2}:\d{2}$/, { message: 'bookingTime must be in HH:MM format' })
+  @Matches(/^\d{1,2}:\d{2}$/, {
+    message: 'bookingTime must be in HH:MM format',
+  })
   bookingTime!: string;
 
   @Type(() => Number)

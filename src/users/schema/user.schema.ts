@@ -29,13 +29,21 @@ export enum RestaurantMembershipStatus {
 
 @Schema({ _id: false })
 export class RestaurantMembership {
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'restaurant', required: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'restaurant',
+    required: true,
+  })
   restaurantId!: Types.ObjectId;
 
   @Prop({ type: String, enum: ['owner'], default: 'owner', required: true })
   role!: string;
 
-  @Prop({ type: String, enum: Object.values(RestaurantMembershipStatus), default: RestaurantMembershipStatus.PENDING })
+  @Prop({
+    type: String,
+    enum: Object.values(RestaurantMembershipStatus),
+    default: RestaurantMembershipStatus.PENDING,
+  })
   status!: RestaurantMembershipStatus;
 }
 
@@ -85,7 +93,12 @@ export class User {
   name!: string;
   @Prop({ required: true })
   email!: string;
-  @Prop({ type: String, enum: Object.values(AuthAccountType), default: AuthAccountType.CUSTOMER, required: true })
+  @Prop({
+    type: String,
+    enum: Object.values(AuthAccountType),
+    default: AuthAccountType.CUSTOMER,
+    required: true,
+  })
   accountType!: AuthAccountType;
   // The single administrator permitted to authenticate is provisioned by the
   // server bootstrap. This flag is never accepted from public signup/update DTOs.
@@ -96,11 +109,22 @@ export class User {
   // Phone stored as string — Numbers drop leading zeros and "+" country codes
   @Prop()
   phone?: string;
-  @Prop({ type: String, enum: Object.values(roles), required: true, default: roles.CUSTOMER, index: true })
+  @Prop({
+    type: String,
+    enum: Object.values(roles),
+    required: true,
+    default: roles.CUSTOMER,
+    index: true,
+  })
   role!: roles;
   @Prop({ required: true, default: false })
   isVerified!: boolean;
-  @Prop({ type: String, enum: Object.values(UserStatus), default: UserStatus.ACTIVE, index: true })
+  @Prop({
+    type: String,
+    enum: Object.values(UserStatus),
+    default: UserStatus.ACTIVE,
+    index: true,
+  })
   status!: UserStatus;
   @Prop({ type: [RestaurantMembership], default: [] })
   restaurantMemberships!: RestaurantMembership[];
@@ -129,7 +153,10 @@ export class User {
   profile?: Profile;
   @Prop({ type: DeliveryAddress })
   deliveryAddress?: DeliveryAddress;
-  @Prop({ type: [{ type: MongooseSchema.Types.ObjectId, ref: 'restaurant' }], default: [] })
+  @Prop({
+    type: [{ type: MongooseSchema.Types.ObjectId, ref: 'restaurant' }],
+    default: [],
+  })
   favorites!: Types.ObjectId[];
   // OAuth fields
   @Prop()
@@ -142,13 +169,19 @@ export const Userschema = SchemaFactory.createForClass(User);
 
 // Lookup by hashed refresh/reset/OTP tokens must be fast and indexed
 Userschema.index({ resetToken: 1 }, { sparse: true });
-Userschema.index({ email: 1, accountType: 1 }, { unique: true, name: 'email_account_type_unique' });
+Userschema.index(
+  { email: 1, accountType: 1 },
+  { unique: true, name: 'email_account_type_unique' },
+);
 Userschema.index({ status: 1, role: 1, _id: 1 });
 Userschema.index(
   { accountType: 1, isPrimaryAdmin: 1 },
   {
     unique: true,
-    partialFilterExpression: { accountType: AuthAccountType.ADMIN, isPrimaryAdmin: true },
+    partialFilterExpression: {
+      accountType: AuthAccountType.ADMIN,
+      isPrimaryAdmin: true,
+    },
     name: 'single_primary_admin',
   },
 );

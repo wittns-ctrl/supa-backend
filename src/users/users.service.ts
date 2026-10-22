@@ -9,12 +9,30 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { AuthAccountType, RestaurantMembershipStatus, User, UserDocument, UserStatus, roles } from './schema/user.schema';
-import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurants/schema/restaurant.schema';
+import {
+  AuthAccountType,
+  RestaurantMembershipStatus,
+  User,
+  UserDocument,
+  UserStatus,
+  roles,
+} from './schema/user.schema';
+import {
+  restaurant,
+  restaurantDocument,
+  RestaurantStatus,
+} from 'src/restaurants/schema/restaurant.schema';
 import { order, orderDocument } from 'src/orders/schema/order.schema';
-import { bookings, bookingsDocument, reviewsEnums } from 'src/bookings/schema/bookings.schema';
+import {
+  bookings,
+  bookingsDocument,
+  reviewsEnums,
+} from 'src/bookings/schema/bookings.schema';
 import { review, reviewDocument } from 'src/reviews/schema/review.schema';
-import { notification, notificationDocument } from 'src/notifications/schema/notifications.schema';
+import {
+  notification,
+  notificationDocument,
+} from 'src/notifications/schema/notifications.schema';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { sanitizeUser } from 'src/common/utils/user-response.util';
@@ -52,14 +70,18 @@ export class UsersService implements OnModuleInit {
     });
     for (const user of users) {
       const legacyRole = user.role;
-      user.accountType = legacyRole === roles.ADMIN
-        ? AuthAccountType.ADMIN
-        : legacyRole === roles.OWNER
-          ? AuthAccountType.OWNER
-          : AuthAccountType.CUSTOMER;
+      user.accountType =
+        legacyRole === roles.ADMIN
+          ? AuthAccountType.ADMIN
+          : legacyRole === roles.OWNER
+            ? AuthAccountType.OWNER
+            : AuthAccountType.CUSTOMER;
 
       const oldMemberships = [...(user.restaurantMemberships || [])] as any[];
-      if (user.accountType === AuthAccountType.CUSTOMER && oldMemberships.length) {
+      if (
+        user.accountType === AuthAccountType.CUSTOMER &&
+        oldMemberships.length
+      ) {
         let owner = await this.userModel.findOne({
           email: user.email,
           accountType: AuthAccountType.OWNER,
@@ -70,7 +92,10 @@ export class UsersService implements OnModuleInit {
           delete source.__v;
           delete source.createdAt;
           delete source.updatedAt;
-          const initialPassword = await bcrypt.hash(randomBytes(32).toString('hex'), 12);
+          const initialPassword = await bcrypt.hash(
+            randomBytes(32).toString('hex'),
+            12,
+          );
           owner = await this.userModel.create({
             ...source,
             password: initialPassword,
@@ -89,11 +114,16 @@ export class UsersService implements OnModuleInit {
           });
         } else {
           const existingRestaurantIds = new Set(
-            (owner.restaurantMemberships || []).map((entry: any) => entry.restaurantId?.toString()),
+            (owner.restaurantMemberships || []).map((entry: any) =>
+              entry.restaurantId?.toString(),
+            ),
           );
           owner.restaurantMemberships = [
             ...(owner.restaurantMemberships || []),
-            ...oldMemberships.filter((entry) => !existingRestaurantIds.has(entry.restaurantId?.toString())),
+            ...oldMemberships.filter(
+              (entry) =>
+                !existingRestaurantIds.has(entry.restaurantId?.toString()),
+            ),
           ] as any;
           owner.authSessions = [];
           await owner.save();
@@ -106,19 +136,24 @@ export class UsersService implements OnModuleInit {
         user.authSessions = [];
       }
 
-      if (user.accountType === AuthAccountType.OWNER && !user.restaurantMemberships?.length) {
+      if (
+        user.accountType === AuthAccountType.OWNER &&
+        !user.restaurantMemberships?.length
+      ) {
         const owned = await this.restaurantModel.find({ ownerId: user._id });
         user.restaurantMemberships = owned.map((restaurant) => ({
           restaurantId: restaurant._id,
           role: roles.OWNER,
-          status: restaurant.status === RestaurantStatus.ACTIVE && restaurant.isApproved
-            ? RestaurantMembershipStatus.ACTIVE
-            : restaurant.status === RestaurantStatus.REJECTED
-              ? RestaurantMembershipStatus.REJECTED
-              : restaurant.status === RestaurantStatus.SUSPENDED
-                ? RestaurantMembershipStatus.SUSPENDED
-                : RestaurantMembershipStatus.PENDING,
-        })) as any;
+          status:
+            restaurant.status === RestaurantStatus.ACTIVE &&
+            restaurant.isApproved
+              ? RestaurantMembershipStatus.ACTIVE
+              : restaurant.status === RestaurantStatus.REJECTED
+                ? RestaurantMembershipStatus.REJECTED
+                : restaurant.status === RestaurantStatus.SUSPENDED
+                  ? RestaurantMembershipStatus.SUSPENDED
+                  : RestaurantMembershipStatus.PENDING,
+        }));
       }
 
       await user.save();
@@ -144,12 +179,15 @@ export class UsersService implements OnModuleInit {
   async findAll(role?: string, status?: string) {
     const filter: Record<string, unknown> = {};
     if (role) {
-      const mappedRole = role === 'owner' || role === 'restaurant_owner' ? 'owner' : role;
+      const mappedRole =
+        role === 'owner' || role === 'restaurant_owner' ? 'owner' : role;
       filter.accountType = mappedRole;
     }
     if (status) filter.status = status;
 
-    const users = await this.userModel.find(filter).select('-password -refreshToken');
+    const users = await this.userModel
+      .find(filter)
+      .select('-password -refreshToken');
     return users.map((u) => this.formatUser(u));
   }
 
@@ -170,7 +208,12 @@ export class UsersService implements OnModuleInit {
    * Email uniqueness is enforced manually since the unique index alone
    * returns an opaque 500 on duplicates.
    */
-  async update(id: string, updateUserDto: UpdateUserDto, userId?: string, userRole?: string) {
+  async update(
+    id: string,
+    updateUserDto: UpdateUserDto,
+    userId?: string,
+    userRole?: string,
+  ) {
     this.assertSelfOrAdmin(id, userId, userRole);
 
     if (updateUserDto.email) {
@@ -179,16 +222,26 @@ export class UsersService implements OnModuleInit {
       const normalized = updateUserDto.email.trim().toLowerCase();
       const existing = await this.userModel.findOne({
         accountType: account.accountType,
-        email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        email: {
+          $regex: new RegExp(
+            `^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            'i',
+          ),
+        },
       });
       if (existing && existing._id.toString() !== id) {
-        throw new BadRequestException('Email is already in use by another account');
+        throw new BadRequestException(
+          'Email is already in use by another account',
+        );
       }
       updateUserDto.email = normalized;
     }
 
     const user = await this.userModel
-      .findByIdAndUpdate(id, updateUserDto, { returnDocument: 'after', runValidators: true })
+      .findByIdAndUpdate(id, updateUserDto, {
+        returnDocument: 'after',
+        runValidators: true,
+      })
       .select('-password -refreshToken');
     if (!user) throw new NotFoundException('User not found');
     return this.formatUser(user);
@@ -202,7 +255,9 @@ export class UsersService implements OnModuleInit {
     const user = await this.userModel.findById(id);
     if (!user) throw new NotFoundException('User not found');
     if (user.accountType !== AuthAccountType.CUSTOMER) {
-      throw new BadRequestException('Only customer accounts can be demoted through this endpoint');
+      throw new BadRequestException(
+        'Only customer accounts can be demoted through this endpoint',
+      );
     }
     if (user.role !== role) {
       user.role = role as roles;
@@ -219,8 +274,14 @@ export class UsersService implements OnModuleInit {
 
   async createAdminAccount(dto: CreateAuthDto) {
     const email = dto.email.trim().toLowerCase();
-    const existing = await this.userModel.findOne({ email, accountType: AuthAccountType.ADMIN });
-    if (existing) throw new BadRequestException('An administrator account already exists for this email');
+    const existing = await this.userModel.findOne({
+      email,
+      accountType: AuthAccountType.ADMIN,
+    });
+    if (existing)
+      throw new BadRequestException(
+        'An administrator account already exists for this email',
+      );
     if (Buffer.byteLength(dto.password, 'utf8') > 72) {
       throw new BadRequestException('Password cannot exceed 72 UTF-8 bytes');
     }
@@ -239,14 +300,23 @@ export class UsersService implements OnModuleInit {
     return this.formatUser(user);
   }
 
-  async changePassword(id: string, dto: ChangePasswordDto, userId?: string, userRole?: string) {
+  async changePassword(
+    id: string,
+    dto: ChangePasswordDto,
+    userId?: string,
+    userRole?: string,
+  ) {
     this.assertSelfOrAdmin(id, userId, userRole);
     const user = await this.userModel.findById(id);
     if (!user) throw new NotFoundException('User not found');
-    if (!user.password) throw new BadRequestException('No password set for this account (social login). Use the provider to sign in or request a password reset first.');
+    if (!user.password)
+      throw new BadRequestException(
+        'No password set for this account (social login). Use the provider to sign in or request a password reset first.',
+      );
 
     const match = await bcrypt.compare(dto.currentPassword, user.password);
-    if (!match) throw new UnauthorizedException('Current password is incorrect');
+    if (!match)
+      throw new UnauthorizedException('Current password is incorrect');
     if (Buffer.byteLength(dto.newPassword, 'utf8') > 72) {
       throw new BadRequestException('Password cannot exceed 72 UTF-8 bytes');
     }
@@ -280,11 +350,14 @@ export class UsersService implements OnModuleInit {
     if (!Types.ObjectId.isValid(restaurantId)) {
       throw new BadRequestException('Invalid restaurant id');
     }
-    const visibleRestaurant = await this.restaurantModel.findOne({
-      _id: restaurantId,
-      isApproved: true,
-      status: RestaurantStatus.ACTIVE,
-    }).select('_id').exec();
+    const visibleRestaurant = await this.restaurantModel
+      .findOne({
+        _id: restaurantId,
+        isApproved: true,
+        status: RestaurantStatus.ACTIVE,
+      })
+      .select('_id')
+      .exec();
     if (!visibleRestaurant) throw new NotFoundException('Restaurant not found');
     const user = await this.userModel
       .findByIdAndUpdate(
@@ -315,11 +388,7 @@ export class UsersService implements OnModuleInit {
     return this.getFavorites(targetUserId, callerUserId, userRole);
   }
 
-  async getFavorites(
-    userId: string,
-    callerUserId?: string,
-    userRole?: string,
-  ) {
+  async getFavorites(userId: string, callerUserId?: string, userRole?: string) {
     this.assertSelfOrAdmin(userId, callerUserId, userRole);
     const user = await this.userModel.findById(userId).populate('favorites');
     if (!user) throw new NotFoundException('User not found');
@@ -360,7 +429,10 @@ export class UsersService implements OnModuleInit {
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const visibleOrders = { customerId: userId, hiddenForCustomer: { $ne: true } };
+    const visibleOrders = {
+      customerId: userId,
+      hiddenForCustomer: { $ne: true },
+    };
     const totalOrders = await this.orderModel.countDocuments(visibleOrders);
     const ordersThisMonthCount = await this.orderModel.countDocuments({
       ...visibleOrders,
@@ -373,7 +445,8 @@ export class UsersService implements OnModuleInit {
       hiddenForCustomer: { $ne: true },
     };
 
-    const upcomingBookingsCount = await this.bookingsModel.countDocuments(bookingFilter);
+    const upcomingBookingsCount =
+      await this.bookingsModel.countDocuments(bookingFilter);
 
     const nextBookingDoc = await this.bookingsModel
       .findOne(bookingFilter)
@@ -387,13 +460,20 @@ export class UsersService implements OnModuleInit {
     }
 
     const favoritesCount = user.favorites ? user.favorites.length : 0;
-    const favoriteRestaurants = await this.getFavorites(userId, callerUserId, userRole);
+    const favoriteRestaurants = await this.getFavorites(
+      userId,
+      callerUserId,
+      userRole,
+    );
 
     const userReviews = await this.reviewModel.find({ customerId: userId });
     const reviewsCount = userReviews.length;
     let avgRatingGiven: number | string = 0;
     if (reviewsCount > 0) {
-      const sum = userReviews.reduce((acc, r) => acc + Number(r.rating || 0), 0);
+      const sum = userReviews.reduce(
+        (acc, r) => acc + Number(r.rating || 0),
+        0,
+      );
       avgRatingGiven = Number((sum / reviewsCount).toFixed(1));
     } else {
       avgRatingGiven = 'N/A';
@@ -422,7 +502,9 @@ export class UsersService implements OnModuleInit {
           ? (o.restaurantId as any).name
           : 'Restaurant';
       const itemsSummary = o.items.map((i) => `${i.qty}x ${i.name}`).join(', ');
-      const createdAt = (o as any).createdAt ? new Date((o as any).createdAt) : new Date();
+      const createdAt = (o as any).createdAt
+        ? new Date((o as any).createdAt)
+        : new Date();
       return {
         id: `#${o._id.toString().slice(-4).toUpperCase()}`,
         rawId: o._id.toString(),
@@ -431,7 +513,10 @@ export class UsersService implements OnModuleInit {
         status: o.status,
         statusLabel: STATUS_LABELS[o.status] || o.status,
         price: `$${o.total.toFixed(2)}`,
-        time: createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        time: createdAt.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
       };
     });
 
@@ -449,7 +534,11 @@ export class UsersService implements OnModuleInit {
       return {
         id: b._id.toString(),
         restaurant: rName,
-        date: new Date(b.bookingDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+        date: new Date(b.bookingDate).toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        }),
         time: b.bookingTime,
         guests: b.guests,
         status: b.status,
@@ -462,17 +551,28 @@ export class UsersService implements OnModuleInit {
       .limit(10);
 
     const notifications = notificationsRaw.map((n) => {
-      const createdAt = (n as any).createdAt ? new Date((n as any).createdAt) : new Date();
+      const createdAt = (n as any).createdAt
+        ? new Date((n as any).createdAt)
+        : new Date();
       return {
         id: n._id.toString(),
         text: n.message,
         title: n.title,
-        time: createdAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        time: createdAt.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
         unread: !n.isRead,
       };
     });
 
-    const activities: Array<{ id: string; user: string; action: string; time: string; avatar: string }> = [];
+    const activities: Array<{
+      id: string;
+      user: string;
+      action: string;
+      time: string;
+      avatar: string;
+    }> = [];
     if (recentOrders.length > 0) {
       const latestOrder = recentOrders[0];
       activities.push({
@@ -534,7 +634,9 @@ export class UsersService implements OnModuleInit {
       ...sanitized,
       type: user.role === 'owner' ? 'owner' : user.role,
       joined: (user as UserDocument & { createdAt?: Date }).createdAt
-        ? new Date((user as UserDocument & { createdAt?: Date }).createdAt!).toLocaleDateString('en-US', {
+        ? new Date(
+            (user as UserDocument & { createdAt?: Date }).createdAt!,
+          ).toLocaleDateString('en-US', {
             month: 'short',
             year: 'numeric',
           })

@@ -8,7 +8,6 @@ import {
   Delete,
   Query,
   UseGuards,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { BookingsService } from './bookings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
@@ -52,18 +51,46 @@ export class BookingsController {
     const { page: p, limit: l } = parsePagination({ page, limit });
 
     if (role === roles.ADMIN) {
-      return this.bookingsService.findAll(customerId, restaurantId, user!.id, role, p, l);
+      return this.bookingsService.findAll(
+        customerId,
+        restaurantId,
+        user!.id,
+        role,
+        p,
+        l,
+      );
     }
     if (view === 'owner' && userHasRole(user, roles.OWNER)) {
       // Owner scoping is enforced in the service (must own the restaurant).
-      return this.bookingsService.findAll(customerId, restaurantId, user!.id, roles.OWNER, p, l);
+      return this.bookingsService.findAll(
+        customerId,
+        restaurantId,
+        user!.id,
+        roles.OWNER,
+        p,
+        l,
+      );
     }
-    return this.bookingsService.findAll(undefined, undefined, user!.id, role, p, l);
+    return this.bookingsService.findAll(
+      undefined,
+      undefined,
+      user!.id,
+      role,
+      p,
+      l,
+    );
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.bookingsService.findOne(id, user.id, (user as any).roles?.join(',') ?? user.role);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.bookingsService.findOne(
+      id,
+      user.id,
+      (user as any).roles?.join(',') ?? user.role,
+    );
   }
 
   @Patch(':id')
@@ -74,12 +101,24 @@ export class BookingsController {
     @Body() updateBookingDto: UpdateBookingDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.bookingsService.update(id, updateBookingDto, user.id, (user as any).roles?.join(',') ?? user.role);
+    return this.bookingsService.update(
+      id,
+      updateBookingDto,
+      user.id,
+      (user as any).roles?.join(',') ?? user.role,
+    );
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
-    return this.bookingsService.remove(id, user.id, (user as any).roles?.join(',') ?? user.role);
+  remove(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
+    return this.bookingsService.remove(
+      id,
+      user.id,
+      (user as any).roles?.join(',') ?? user.role,
+    );
   }
 
   @Delete(':id/history')

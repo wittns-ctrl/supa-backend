@@ -1,10 +1,18 @@
-import { Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { review, reviewDocument } from './schema/review.schema';
 import { Model, Types } from 'mongoose';
-import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantDocument,
+} from 'src/restaurants/schema/restaurant.schema';
 import { order, orderDocument } from 'src/orders/schema/order.schema';
 import { roles } from 'src/users/schema/user.schema';
 
@@ -12,7 +20,8 @@ import { roles } from 'src/users/schema/user.schema';
 export class ReviewsService {
   constructor(
     @InjectModel(review.name) private reviewModel: Model<reviewDocument>,
-    @InjectModel(restaurant.name) private restaurantModel: Model<restaurantDocument>,
+    @InjectModel(restaurant.name)
+    private restaurantModel: Model<restaurantDocument>,
     @InjectModel(order.name) private orderModel: Model<orderDocument>,
   ) {}
 
@@ -28,12 +37,17 @@ export class ReviewsService {
     if (!Types.ObjectId.isValid(createReviewDto.restaurantId)) {
       throw new BadRequestException('Invalid restaurant id');
     }
-    if (!createReviewDto.customerId || !Types.ObjectId.isValid(createReviewDto.customerId)) {
+    if (
+      !createReviewDto.customerId ||
+      !Types.ObjectId.isValid(createReviewDto.customerId)
+    ) {
       throw new BadRequestException('Invalid customer id');
     }
     const rating = Number(createReviewDto.rating);
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-      throw new BadRequestException('Rating must be an integer between 1 and 5');
+      throw new BadRequestException(
+        'Rating must be an integer between 1 and 5',
+      );
     }
 
     // Purchase verification: customers can only review restaurants they have
@@ -55,7 +69,9 @@ export class ReviewsService {
         restaurantId: createReviewDto.restaurantId,
       });
       if (existing) {
-        throw new BadRequestException('You have already reviewed this restaurant');
+        throw new BadRequestException(
+          'You have already reviewed this restaurant',
+        );
       }
     }
 
@@ -64,14 +80,26 @@ export class ReviewsService {
     return this.formatReview(created);
   }
 
-  async findAll(restaurantId?: string, pageQuery?: string, limitQuery?: string) {
+  async findAll(
+    restaurantId?: string,
+    pageQuery?: string,
+    limitQuery?: string,
+  ) {
     if (restaurantId && !Types.ObjectId.isValid(restaurantId)) {
       throw new BadRequestException('Invalid restaurant id');
     }
     const requestedPage = pageQuery !== undefined || limitQuery !== undefined;
     const page = Math.max(parseInt(pageQuery || '1', 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(limitQuery || (requestedPage ? '20' : '50'), 10) || 50, 1), 100);
-    const filter = restaurantId ? { restaurantId: new Types.ObjectId(restaurantId) } : {};
+    const limit = Math.min(
+      Math.max(
+        parseInt(limitQuery || (requestedPage ? '20' : '50'), 10) || 50,
+        1,
+      ),
+      100,
+    );
+    const filter = restaurantId
+      ? { restaurantId: new Types.ObjectId(restaurantId) }
+      : {};
     const [reviews, total] = await Promise.all([
       this.reviewModel
         .find(filter)
@@ -80,31 +108,54 @@ export class ReviewsService {
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),
-      requestedPage ? this.reviewModel.countDocuments(filter).exec() : Promise.resolve(0),
+      requestedPage
+        ? this.reviewModel.countDocuments(filter).exec()
+        : Promise.resolve(0),
     ]);
     const data = reviews.map((r) => this.formatReview(r));
     return requestedPage
-      ? { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+      ? {
+          data,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+          },
+        }
       : data;
   }
 
   async findOne(id: string) {
-    const item = await this.reviewModel.findById(id).populate('customerId', 'name');
+    const item = await this.reviewModel
+      .findById(id)
+      .populate('customerId', 'name');
     if (!item) throw new NotFoundException('Review not found');
     return this.formatReview(item);
   }
 
-  async update(id: string, updateReviewDto: UpdateReviewDto, userId: string, userRole: string) {
+  async update(
+    id: string,
+    updateReviewDto: UpdateReviewDto,
+    userId: string,
+    userRole: string,
+  ) {
     const updated = await this.reviewModel.findById(id);
     if (!updated) throw new NotFoundException('Review not found');
 
     if (userRole !== 'admin' && updated.customerId.toString() !== userId) {
-      throw new UnauthorizedException('You are not authorized to update this review');
+      throw new UnauthorizedException(
+        'You are not authorized to update this review',
+      );
     }
 
-    const saved = await this.reviewModel.findByIdAndUpdate(id, updateReviewDto, {
-      returnDocument: 'after',
-    });
+    const saved = await this.reviewModel.findByIdAndUpdate(
+      id,
+      updateReviewDto,
+      {
+        returnDocument: 'after',
+      },
+    );
     if (!saved) throw new NotFoundException('Review not found');
     await this.updateRestaurantRating(saved.restaurantId.toString());
     return this.formatReview(saved);
@@ -115,7 +166,9 @@ export class ReviewsService {
     if (!deleted) throw new NotFoundException('Review not found');
 
     if (userRole !== 'admin' && deleted.customerId.toString() !== userId) {
-      throw new UnauthorizedException('You are not authorized to delete this review');
+      throw new UnauthorizedException(
+        'You are not authorized to delete this review',
+      );
     }
 
     await this.reviewModel.findByIdAndDelete(id);
@@ -124,10 +177,18 @@ export class ReviewsService {
   }
 
   private async updateRestaurantRating(restaurantId: string) {
-    const [summary] = await this.reviewModel.aggregate([
-      { $match: { restaurantId: new Types.ObjectId(restaurantId) } },
-      { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } },
-    ]).exec();
+    const [summary] = await this.reviewModel
+      .aggregate([
+        { $match: { restaurantId: new Types.ObjectId(restaurantId) } },
+        {
+          $group: {
+            _id: null,
+            average: { $avg: '$rating' },
+            count: { $sum: 1 },
+          },
+        },
+      ])
+      .exec();
     const avg = Number(summary?.average || 0);
     await this.restaurantModel.findByIdAndUpdate(restaurantId, {
       rating: Math.round(avg * 10) / 10,

@@ -31,7 +31,7 @@ export class DeliveryAddressDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(200)
-  @Matches(/^[\p{L}\p{N}][\p{L}\p{N}\s,.'#+\/-]{1,199}$/u)
+  @Matches(/^[\p{L}\p{N}][\p{L}\p{N}\s,.'#+/-]{1,199}$/u)
   street?: string;
 
   @IsOptional()
@@ -86,8 +86,15 @@ export class CreateOrderDto {
 
   @IsString()
   @IsNotEmpty()
-  @IsIn(['ASAP (25-35 min)', '12:00 PM', '12:30 PM', '1:00 PM', '7:00 PM', '7:30 PM', '8:00 PM'])
+  @IsIn([
+    'ASAP (25-35 min)',
+    '12:00 PM',
+    '12:30 PM',
+    '1:00 PM',
+    '7:00 PM',
+    '7:30 PM',
+    '8:00 PM',
+  ])
   @MaxLength(50)
   timeSlot?: string;
-
 }

@@ -11,9 +11,16 @@ import { Model, Types } from 'mongoose';
 import { order, orderDocument, OrderStatus } from './schema/order.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { menu, menuDocument } from 'src/menus/schema/menu.schema';
-import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantDocument,
+} from 'src/restaurants/schema/restaurant.schema';
 import { NotificationsService } from 'src/notifications/notifications.service';
-import { Payments, payment, paymentDocument } from 'src/payments/schema/payments.schema';
+import {
+  Payments,
+  payment,
+  paymentDocument,
+} from 'src/payments/schema/payments.schema';
 import { roles, User, UserDocument } from 'src/users/schema/user.schema';
 import { OrderEventsService } from './order-events.service';
 import { PaymentsService } from 'src/payments/payments.service';
@@ -43,8 +50,16 @@ const DEFAULT_TIMELINE = [
  * (e.g. pending → delivered without any kitchen steps).
  */
 const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  [OrderStatus.PENDING]: [OrderStatus.ACCEPTED, OrderStatus.REJECTED, OrderStatus.CANCELLED],
-  [OrderStatus.ACCEPTED]: [OrderStatus.PREPARING, OrderStatus.CANCELLED, OrderStatus.REJECTED],
+  [OrderStatus.PENDING]: [
+    OrderStatus.ACCEPTED,
+    OrderStatus.REJECTED,
+    OrderStatus.CANCELLED,
+  ],
+  [OrderStatus.ACCEPTED]: [
+    OrderStatus.PREPARING,
+    OrderStatus.CANCELLED,
+    OrderStatus.REJECTED,
+  ],
   [OrderStatus.PREPARING]: [OrderStatus.READY, OrderStatus.CANCELLED],
   [OrderStatus.READY]: [OrderStatus.ON_WAY, OrderStatus.CANCELLED],
   [OrderStatus.ON_WAY]: [OrderStatus.DELIVERED],
@@ -53,7 +68,6 @@ const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.REJECTED]: [],
 };
 
-const CUSTOMER_ALLOWED = new Set([OrderStatus.CANCELLED]);
 const OWNER_ALLOWED = new Set([
   OrderStatus.ACCEPTED,
   OrderStatus.REJECTED,
@@ -71,7 +85,8 @@ export class OrdersService {
   constructor(
     @InjectModel(order.name) private orderModel: Model<orderDocument>,
     @InjectModel(menu.name) private menuModel: Model<menuDocument>,
-    @InjectModel(restaurant.name) private restaurantModel: Model<restaurantDocument>,
+    @InjectModel(restaurant.name)
+    private restaurantModel: Model<restaurantDocument>,
     @InjectModel(payment.name) private paymentModel: Model<paymentDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private notificationsService: NotificationsService,
@@ -79,11 +94,7 @@ export class OrdersService {
     private readonly paymentsService: PaymentsService,
   ) {}
 
-  async create(
-    dto: CreateOrderDto,
-    userId?: string,
-    userRole?: string,
-  ) {
+  async create(dto: CreateOrderDto, userId?: string, userRole?: string) {
     if (userRole === roles.CUSTOMER && userId) {
       dto.customerId = userId;
     }
@@ -109,45 +120,77 @@ export class OrdersService {
     };
     const phoneDigits = trimmedAddress.phone.replace(/\D/g, '');
     if (
-      trimmedAddress.street.length < 2 || trimmedAddress.street.length > 200 ||
-      !/^[\p{L}\p{N}][\p{L}\p{N}\s,.'#+\/-]{1,199}$/u.test(trimmedAddress.street) ||
-      trimmedAddress.city.length < 2 || trimmedAddress.city.length > 100 ||
+      trimmedAddress.street.length < 2 ||
+      trimmedAddress.street.length > 200 ||
+      !/^[\p{L}\p{N}][\p{L}\p{N}\s,.'#+/-]{1,199}$/u.test(
+        trimmedAddress.street,
+      ) ||
+      trimmedAddress.city.length < 2 ||
+      trimmedAddress.city.length > 100 ||
       !/^[\p{L}\p{N}][\p{L}\p{N}\s.'-]{1,99}$/u.test(trimmedAddress.city) ||
-      trimmedAddress.postalCode.length < 2 || trimmedAddress.postalCode.length > 20 ||
+      trimmedAddress.postalCode.length < 2 ||
+      trimmedAddress.postalCode.length > 20 ||
       !/^[A-Za-z0-9][A-Za-z0-9 -]{1,19}$/.test(trimmedAddress.postalCode) ||
       !/^\+?[0-9][0-9\s().-]{6,18}$/.test(trimmedAddress.phone) ||
-      phoneDigits.length < 8 || phoneDigits.length > 15 ||
+      phoneDigits.length < 8 ||
+      phoneDigits.length > 15 ||
       trimmedAddress.apartment.length > 50 ||
       trimmedAddress.instructions.length > 300
     ) {
-      throw new BadRequestException('Please provide a valid delivery address and phone number');
+      throw new BadRequestException(
+        'Please provide a valid delivery address and phone number',
+      );
     }
-    const allowedTimeSlots = ['ASAP (25-35 min)', '12:00 PM', '12:30 PM', '1:00 PM', '7:00 PM', '7:30 PM', '8:00 PM'];
+    const allowedTimeSlots = [
+      'ASAP (25-35 min)',
+      '12:00 PM',
+      '12:30 PM',
+      '1:00 PM',
+      '7:00 PM',
+      '7:30 PM',
+      '8:00 PM',
+    ];
     if (!dto.timeSlot || !allowedTimeSlots.includes(dto.timeSlot)) {
       throw new BadRequestException('Please choose a valid delivery time');
     }
 
     const validItems = dto.items.map((item) => {
       if (!item.menuItemId || !Types.ObjectId.isValid(item.menuItemId)) {
-        throw new BadRequestException(`Invalid menu item id: ${item.menuItemId}`);
+        throw new BadRequestException(
+          `Invalid menu item id: ${item.menuItemId}`,
+        );
       }
       const qty = Number(item.qty);
       if (!Number.isInteger(qty) || qty < 1 || qty > 100) {
-        throw new BadRequestException('Item quantity must be between 1 and 100');
+        throw new BadRequestException(
+          'Item quantity must be between 1 and 100',
+        );
       }
       return { id: new Types.ObjectId(item.menuItemId), qty };
     });
     // Fetch all cart items in one database round trip instead of one query per item.
-    const menuItems = await this.menuModel.find({
-      _id: { $in: validItems.map(({ id }) => id) },
-    }).exec();
-    const menuById = new Map(menuItems.map((menuItem) => [menuItem._id.toString(), menuItem]));
-    const orderItems: { menuItemId: Types.ObjectId; name: string; qty: number; price: number }[] = [];
+    const menuItems = await this.menuModel
+      .find({
+        _id: { $in: validItems.map(({ id }) => id) },
+      })
+      .exec();
+    const menuById = new Map(
+      menuItems.map((menuItem) => [menuItem._id.toString(), menuItem]),
+    );
+    const orderItems: {
+      menuItemId: Types.ObjectId;
+      name: string;
+      qty: number;
+      price: number;
+    }[] = [];
     let subtotal = 0;
 
     for (const item of validItems) {
       const menuItem = menuById.get(item.id.toString());
-      if (!menuItem) throw new NotFoundException(`Menu item ${item.id.toString()} not found`);
+      if (!menuItem)
+        throw new NotFoundException(
+          `Menu item ${item.id.toString()} not found`,
+        );
       if (!menuItem.isAvailable) {
         throw new BadRequestException(`${menuItem.name} is not available`);
       }
@@ -169,7 +212,10 @@ export class OrdersService {
 
     const discount = 0;
     const deliveryFee = 3.99;
-    const total = Math.max(0, Math.round((subtotal + deliveryFee - discount) * 100) / 100);
+    const total = Math.max(
+      0,
+      Math.round((subtotal + deliveryFee - discount) * 100) / 100,
+    );
 
     const placedAt = new Date().toISOString();
     const timeline = DEFAULT_TIMELINE.map((step, i) => ({
@@ -193,7 +239,9 @@ export class OrdersService {
     });
 
     const restaurantDoc = await this.restaurantModel.findById(dto.restaurantId);
-    const customerDoc = await this.userModel.findById(dto.customerId).select('name email phone');
+    const customerDoc = await this.userModel
+      .findById(dto.customerId)
+      .select('name email phone');
     const createdAt = new Date();
     const orderTrace = {
       eventType: 'order.created',
@@ -211,7 +259,11 @@ export class OrdersService {
         id: dto.restaurantId,
         name: restaurantDoc?.name,
       },
-      items: created.items.map((item) => ({ name: item.name, quantity: item.qty, unitPrice: item.price })),
+      items: created.items.map((item) => ({
+        name: item.name,
+        quantity: item.qty,
+        unitPrice: item.price,
+      })),
       amounts: { subtotal, deliveryFee, discount, total, currency: 'USD' },
       delivery: {
         address: trimmedAddress,
@@ -253,11 +305,15 @@ export class OrdersService {
       if (customerId) filter.customerId = customerId;
       if (restaurantId) filter.restaurantId = restaurantId;
     } else if (userRole === roles.OWNER) {
-      const owned = await this.restaurantModel.find({ ownerId: userId }).select('_id');
+      const owned = await this.restaurantModel
+        .find({ ownerId: userId })
+        .select('_id');
       const ownedIds = owned.map((r) => r._id);
       if (restaurantId) {
         if (!ownedIds.some((id) => id.toString() === restaurantId)) {
-          throw new UnauthorizedException('You are not authorized to view these orders');
+          throw new UnauthorizedException(
+            'You are not authorized to view these orders',
+          );
         }
         filter.restaurantId = restaurantId;
       } else {
@@ -317,22 +373,28 @@ export class OrdersService {
 
     const ownerId =
       typeof found.restaurantId === 'object'
-        ? (found.restaurantId as { ownerId?: Types.ObjectId }).ownerId?.toString()
+        ? (
+            found.restaurantId as { ownerId?: Types.ObjectId }
+          ).ownerId?.toString()
         : undefined;
     const customerId =
       typeof found.customerId === 'object'
         ? (found.customerId as { _id?: Types.ObjectId })._id?.toString()
         : String(found.customerId);
 
-    const isOwner = grantedRoles.has(roles.OWNER) && !!userId && ownerId === userId;
-    const isCustomer = grantedRoles.has(roles.CUSTOMER) && !!userId && customerId === userId;
+    const isOwner =
+      grantedRoles.has(roles.OWNER) && !!userId && ownerId === userId;
+    const isCustomer =
+      grantedRoles.has(roles.CUSTOMER) && !!userId && customerId === userId;
     if (isCustomer && !isOwner && found.hiddenForCustomer) {
       throw new NotFoundException('Order not found');
     }
     if (grantedRoles.has(roles.ADMIN)) {
       // Admin access is handled separately from either account membership.
     } else if (!isOwner && !isCustomer) {
-      throw new UnauthorizedException('You are not authorized to view this order');
+      throw new UnauthorizedException(
+        'You are not authorized to view this order',
+      );
     }
 
     const rName =
@@ -375,7 +437,9 @@ export class OrdersService {
 
     const ownerId =
       typeof populated.restaurantId === 'object'
-        ? (populated.restaurantId as { ownerId?: Types.ObjectId }).ownerId?.toString()
+        ? (
+            populated.restaurantId as { ownerId?: Types.ObjectId }
+          ).ownerId?.toString()
         : undefined;
 
     const grantedRoles = new Set((userRole || '').split(','));
@@ -384,8 +448,10 @@ export class OrdersService {
         typeof populated.customerId === 'object'
           ? (populated.customerId as { _id?: Types.ObjectId })._id?.toString()
           : String(populated.customerId);
-      const isOwner = grantedRoles.has(roles.OWNER) && !!userId && ownerId === userId;
-      const isCustomer = grantedRoles.has(roles.CUSTOMER) && !!userId && customerId === userId;
+      const isOwner =
+        grantedRoles.has(roles.OWNER) && !!userId && ownerId === userId;
+      const isCustomer =
+        grantedRoles.has(roles.CUSTOMER) && !!userId && customerId === userId;
       if (isOwner) {
         if (!OWNER_ALLOWED.has(status)) {
           throw new BadRequestException(
@@ -444,7 +510,11 @@ export class OrdersService {
     let refundWarning: string | undefined;
     if (status === OrderStatus.CANCELLED || status === OrderStatus.REJECTED) {
       const refund = await this.paymentsService.refundOrderPayment(id);
-      if (!refund.refunded && refund.reason && refund.reason !== 'no paid payment found') {
+      if (
+        !refund.refunded &&
+        refund.reason &&
+        refund.reason !== 'no paid payment found'
+      ) {
         refundWarning = `Order ${status} but refund could not be completed automatically: ${refund.reason}`;
         this.logger.warn(refundWarning);
       }
@@ -466,25 +536,37 @@ export class OrdersService {
         previousStatus: populated.status,
         orderStatus: updated.status,
         actorUserId: userId,
-        customer: typeof updated.customerId === 'object' ? {
-          id: customerId,
-          name: (updated.customerId as any).name,
-          email: (updated.customerId as any).email,
-          phone: (updated.customerId as any).phone,
-        } : { id: customerId },
-        restaurant: typeof populated.restaurantId === 'object' ? {
-          id: (populated.restaurantId as any)._id.toString(),
-          name: (populated.restaurantId as any).name,
-        } : { id: String(populated.restaurantId) },
+        customer:
+          typeof updated.customerId === 'object'
+            ? {
+                id: customerId,
+                name: (updated.customerId as any).name,
+                email: (updated.customerId as any).email,
+                phone: (updated.customerId as any).phone,
+              }
+            : { id: customerId },
+        restaurant:
+          typeof populated.restaurantId === 'object'
+            ? {
+                id: (populated.restaurantId as any)._id.toString(),
+                name: (populated.restaurantId as any).name,
+              }
+            : { id: String(populated.restaurantId) },
         amount: { total: updated.total, currency: 'USD' },
-        payment: latestPayment ? {
-          status: latestPayment.status,
-          method: latestPayment.method,
-          transactionId: latestPayment.transactionId,
-          amount: latestPayment.amount,
-          currency: latestPayment.currency,
-        } : { status: 'not recorded' },
-        items: updated.items.map((item) => ({ name: item.name, quantity: item.qty, unitPrice: item.price })),
+        payment: latestPayment
+          ? {
+              status: latestPayment.status,
+              method: latestPayment.method,
+              transactionId: latestPayment.transactionId,
+              amount: latestPayment.amount,
+              currency: latestPayment.currency,
+            }
+          : { status: 'not recorded' },
+        items: updated.items.map((item) => ({
+          name: item.name,
+          quantity: item.qty,
+          unitPrice: item.price,
+        })),
         delivery: updated.deliveryAddress,
       },
     });
@@ -527,7 +609,13 @@ export class OrdersService {
       {
         _id: id,
         customerId,
-        status: { $in: [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REJECTED] },
+        status: {
+          $in: [
+            OrderStatus.DELIVERED,
+            OrderStatus.CANCELLED,
+            OrderStatus.REJECTED,
+          ],
+        },
         hiddenForCustomer: { $ne: true },
       },
       { $set: { hiddenForCustomer: true } },
@@ -559,9 +647,11 @@ export class OrdersService {
       done: i <= activeIndex,
       // Preserve the timestamp when a step first completed. Statuses such as
       // READY share the Preparing timeline step, so its original time remains.
-      time: i <= activeIndex
-        ? existingTimeline?.find((previous) => previous.key === step.key)?.time || now
-        : undefined,
+      time:
+        i <= activeIndex
+          ? existingTimeline?.find((previous) => previous.key === step.key)
+              ?.time || now
+          : undefined,
     }));
   }
 
@@ -593,12 +683,14 @@ export class OrdersService {
     return {
       id: obj._id.toString(),
       orderId: obj._id.toString().slice(-4).toUpperCase(),
-      customerId: typeof obj.customerId === 'object'
-        ? (obj.customerId as { _id: Types.ObjectId })._id?.toString()
-        : obj.customerId?.toString(),
-      restaurantId: typeof obj.restaurantId === 'object'
-        ? (obj.restaurantId as { _id: Types.ObjectId })._id?.toString()
-        : obj.restaurantId?.toString(),
+      customerId:
+        typeof obj.customerId === 'object'
+          ? (obj.customerId as { _id: Types.ObjectId })._id?.toString()
+          : obj.customerId?.toString(),
+      restaurantId:
+        typeof obj.restaurantId === 'object'
+          ? (obj.restaurantId as { _id: Types.ObjectId })._id?.toString()
+          : obj.restaurantId?.toString(),
       restaurant: rName,
       customer: customerName,
       items: obj.items.map((i) => ({

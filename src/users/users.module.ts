@@ -4,11 +4,17 @@ import { UsersController } from './users.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { User, Userschema } from './schema/user.schema';
 import { AuthModule } from 'src/auth/auth.module';
-import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantSchema,
+} from 'src/restaurants/schema/restaurant.schema';
 import { order, orderSchema } from 'src/orders/schema/order.schema';
 import { bookings, bookingschema } from 'src/bookings/schema/bookings.schema';
 import { review, reviewschema } from 'src/reviews/schema/review.schema';
-import { notification, notificationschema } from 'src/notifications/schema/notifications.schema';
+import {
+  notification,
+  notificationschema,
+} from 'src/notifications/schema/notifications.schema';
 
 @Module({
   imports: [

@@ -32,7 +32,11 @@ export class PaymentsController {
     @CurrentUser() user: { id: string; role: string },
   ) {
     if (!body?.orderId) throw new BadRequestException('orderId is required');
-    return this.paymentsService.createPaypalOrder(body.orderId, user.id, user.role);
+    return this.paymentsService.createPaypalOrder(
+      body.orderId,
+      user.id,
+      user.role,
+    );
   }
 
   @Post('paypal/capture-order')
@@ -41,8 +45,13 @@ export class PaymentsController {
     @Body() body: { paypalOrderId: string },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    if (!body?.paypalOrderId) throw new BadRequestException('paypalOrderId is required');
-    return this.paymentsService.capturePaypalOrder(body.paypalOrderId, user.id, user.role);
+    if (!body?.paypalOrderId)
+      throw new BadRequestException('paypalOrderId is required');
+    return this.paymentsService.capturePaypalOrder(
+      body.paypalOrderId,
+      user.id,
+      user.role,
+    );
   }
 
   @Get()
@@ -58,7 +67,8 @@ export class PaymentsController {
     @Param('orderId') orderId: string,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    if (user.role === roles.ADMIN) return this.paymentsService.findByOrder(orderId);
+    if (user.role === roles.ADMIN)
+      return this.paymentsService.findByOrder(orderId);
     throw new BadRequestException('Admin role required');
   }
 

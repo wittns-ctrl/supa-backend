@@ -11,8 +11,16 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { OAuthStateService } from './oauth-state.service';
-import { OAuthCodeRecord, OAuthCodeRecordSchema, OAuthStateRecord, OAuthStateRecordSchema } from './schema/oauth-record.schema';
-import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.schema';
+import {
+  OAuthCodeRecord,
+  OAuthCodeRecordSchema,
+  OAuthStateRecord,
+  OAuthStateRecordSchema,
+} from './schema/oauth-record.schema';
+import {
+  restaurant,
+  restaurantSchema,
+} from 'src/restaurants/schema/restaurant.schema';
 
 @Module({
   imports: [
@@ -38,7 +46,13 @@ import { restaurant, restaurantSchema } from 'src/restaurants/schema/restaurant.
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AppleAuthService, JwtStrategy, GoogleStrategy, OAuthStateService],
+  providers: [
+    AuthService,
+    AppleAuthService,
+    JwtStrategy,
+    GoogleStrategy,
+    OAuthStateService,
+  ],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}

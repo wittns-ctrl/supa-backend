@@ -54,7 +54,9 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
       if (process.env.NODE_ENV === 'production') {
         throw new Error('REDIS_URL is required in production');
       }
-      this.logger.warn('REDIS_URL is not set; using local development fallbacks.');
+      this.logger.warn(
+        'REDIS_URL is not set; using local development fallbacks.',
+      );
       return;
     }
 
@@ -85,7 +87,11 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
     return subscriber;
   }
 
-  async withLock<T>(key: string, work: () => Promise<T>, ttlMs = 120_000): Promise<T> {
+  async withLock<T>(
+    key: string,
+    work: () => Promise<T>,
+    ttlMs = 120_000,
+  ): Promise<T> {
     const client = this.connection;
     const lockKey = this.key(`lock:${key}`);
     const token = randomUUID();
@@ -97,15 +103,23 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
         try {
           return await work();
         } finally {
-          await client.eval(RELEASE_LOCK_SCRIPT, 1, lockKey, token).catch((error) => {
-            this.logger.warn(`Could not release Redis lock: ${error.message}`);
-          });
+          await client
+            .eval(RELEASE_LOCK_SCRIPT, 1, lockKey, token)
+            .catch((error) => {
+              this.logger.warn(
+                `Could not release Redis lock: ${error.message}`,
+              );
+            });
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, 30 + Math.floor(Math.random() * 40)));
+      await new Promise((resolve) =>
+        setTimeout(resolve, 30 + Math.floor(Math.random() * 40)),
+      );
     }
 
-    throw new ServiceUnavailableException('Could not coordinate this operation; please retry.');
+    throw new ServiceUnavailableException(
+      'Could not coordinate this operation; please retry.',
+    );
   }
 
   async onApplicationShutdown() {

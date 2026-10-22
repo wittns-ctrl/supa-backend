@@ -25,17 +25,22 @@ export class OAuthStateService {
 
   async issue(): Promise<string> {
     const state = randomUUID();
-    await this.stateModel.create({ state, expiresAt: new Date(Date.now() + STATE_TTL_MS) });
+    await this.stateModel.create({
+      state,
+      expiresAt: new Date(Date.now() + STATE_TTL_MS),
+    });
     return state;
   }
 
   /** Validates and burns the state — one-time use. */
   async consume(state: string): Promise<boolean> {
     if (!state) return false;
-    const record = await this.stateModel.findOneAndDelete({
-      state,
-      expiresAt: { $gt: new Date() },
-    }).exec();
+    const record = await this.stateModel
+      .findOneAndDelete({
+        state,
+        expiresAt: { $gt: new Date() },
+      })
+      .exec();
     return Boolean(record);
   }
 }

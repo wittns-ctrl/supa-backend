@@ -17,4 +17,5 @@ export class PlatformSettings {
   maintenanceMode!: boolean;
 }
 
-export const PlatformSettingsSchema = SchemaFactory.createForClass(PlatformSettings);
+export const PlatformSettingsSchema =
+  SchemaFactory.createForClass(PlatformSettings);

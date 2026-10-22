@@ -13,7 +13,12 @@ import {
   RestaurantStatus,
 } from './schema/restaurant.schema';
 import { Model, Types } from 'mongoose';
-import { RestaurantMembershipStatus, User, UserDocument, roles } from 'src/users/schema/user.schema';
+import {
+  RestaurantMembershipStatus,
+  User,
+  UserDocument,
+  roles,
+} from 'src/users/schema/user.schema';
 
 /**
  * Escapes user input before interpolation into $regex — prevents ReDoS and
@@ -23,8 +28,15 @@ export function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 import { order, orderDocument } from 'src/orders/schema/order.schema';
-import { bookings, bookingsDocument } from 'src/bookings/schema/bookings.schema';
-import { payment, paymentDocument, Payments } from 'src/payments/schema/payments.schema';
+import {
+  bookings,
+  bookingsDocument,
+} from 'src/bookings/schema/bookings.schema';
+import {
+  payment,
+  paymentDocument,
+  Payments,
+} from 'src/payments/schema/payments.schema';
 import { menu, menuDocument } from 'src/menus/schema/menu.schema';
 import { MailService } from 'src/mail/mail.service';
 
@@ -97,7 +109,7 @@ export class RestaurantsService {
       restaurantId: new Types.ObjectId(restaurant.id),
       role: 'owner',
       status: RestaurantMembershipStatus.PENDING,
-    } as any);
+    });
     await user.save();
     return {
       ...restaurant,
@@ -112,15 +124,18 @@ export class RestaurantsService {
     };
   }
 
-  async findAll(query: {
-    search?: string;
-    cuisine?: string;
-    location?: string;
-    rating?: string;
-    approvedOnly?: string;
-    page?: string;
-    limit?: string;
-  }, includeUnapproved = false) {
+  async findAll(
+    query: {
+      search?: string;
+      cuisine?: string;
+      location?: string;
+      rating?: string;
+      approvedOnly?: string;
+      page?: string;
+      limit?: string;
+    },
+    includeUnapproved = false,
+  ) {
     const filter: Record<string, unknown> = {};
 
     if (!includeUnapproved) {
@@ -138,11 +153,17 @@ export class RestaurantsService {
     }
 
     if (query.cuisine) {
-      filter.cuisine = { $regex: escapeRegExp(query.cuisine.slice(0, 100)), $options: 'i' };
+      filter.cuisine = {
+        $regex: escapeRegExp(query.cuisine.slice(0, 100)),
+        $options: 'i',
+      };
     }
 
     if (query.location) {
-      filter['location.city'] = { $regex: escapeRegExp(query.location.slice(0, 100)), $options: 'i' };
+      filter['location.city'] = {
+        $regex: escapeRegExp(query.location.slice(0, 100)),
+        $options: 'i',
+      };
     }
 
     if (query.rating) {
@@ -154,21 +175,37 @@ export class RestaurantsService {
 
     const requestedPage = query.page !== undefined || query.limit !== undefined;
     const page = Math.max(parseInt(query.page || '1', 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(query.limit || (requestedPage ? '20' : '50'), 10) || 50, 1), 100);
+    const limit = Math.min(
+      Math.max(
+        parseInt(query.limit || (requestedPage ? '20' : '50'), 10) || 50,
+        1,
+      ),
+      100,
+    );
     const [restaurants, total] = await Promise.all([
       this.restaurantModel
-      .find(filter)
-      .populate('ownerId', 'name email')
-      .sort({ createdAt: -1, _id: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .exec(),
-      requestedPage ? this.restaurantModel.countDocuments(filter).exec() : Promise.resolve(0),
+        .find(filter)
+        .populate('ownerId', 'name email')
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+      requestedPage
+        ? this.restaurantModel.countDocuments(filter).exec()
+        : Promise.resolve(0),
     ]);
 
     const data = restaurants.map((r) => this.formatRestaurant(r));
     return requestedPage
-      ? { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+      ? {
+          data,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+          },
+        }
       : data;
   }
 
@@ -181,11 +218,19 @@ export class RestaurantsService {
       .findById(id)
       .populate('ownerId', 'name email phone');
 
-    if (!found || found.status !== RestaurantStatus.ACTIVE || !found.isApproved) {
+    if (
+      !found ||
+      found.status !== RestaurantStatus.ACTIVE ||
+      !found.isApproved
+    ) {
       throw new NotFoundException('Restaurant not found');
     }
 
-    const menuItems = await this.menuModel.find({ restaurant: id }).sort({ category: 1, _id: 1 }).limit(100).exec();
+    const menuItems = await this.menuModel
+      .find({ restaurant: id })
+      .sort({ category: 1, _id: 1 })
+      .limit(100)
+      .exec();
     return {
       ...this.formatRestaurant(found),
       menu: menuItems.map((m) => this.formatMenuItem(m)),
@@ -200,14 +245,23 @@ export class RestaurantsService {
       .findById(id)
       .populate('ownerId', 'name email phone');
     if (!found) throw new NotFoundException('Restaurant not found');
-    const owner = found.ownerId as unknown as { _id?: Types.ObjectId } | Types.ObjectId;
-    const ownerId = owner && typeof owner === 'object' && '_id' in owner
-      ? owner._id?.toString()
-      : owner?.toString?.();
+    const owner = found.ownerId as unknown as
+      | { _id?: Types.ObjectId }
+      | Types.ObjectId;
+    const ownerId =
+      owner && typeof owner === 'object' && '_id' in owner
+        ? owner._id?.toString()
+        : owner?.toString?.();
     if (userRole !== roles.ADMIN && ownerId !== userId) {
-      throw new UnauthorizedException('You are not authorized to view this restaurant');
+      throw new UnauthorizedException(
+        'You are not authorized to view this restaurant',
+      );
     }
-    const menuItems = await this.menuModel.find({ restaurant: id }).sort({ category: 1, _id: 1 }).limit(100).exec();
+    const menuItems = await this.menuModel
+      .find({ restaurant: id })
+      .sort({ category: 1, _id: 1 })
+      .limit(100)
+      .exec();
     return {
       ...this.formatRestaurant(found),
       menu: menuItems.map((m) => this.formatMenuItem(m)),
@@ -219,7 +273,12 @@ export class RestaurantsService {
     return restaurants.map((r) => this.formatRestaurant(r));
   }
 
-  async update(id: string, updateRestaurantDto: UpdateRestaurantDto, userId?: string, userRole?: string) {
+  async update(
+    id: string,
+    updateRestaurantDto: UpdateRestaurantDto,
+    userId?: string,
+    userRole?: string,
+  ) {
     const existing = await this.restaurantModel.findById(id);
     if (!existing) throw new NotFoundException('Restaurant not found');
     this.assertOwnerOrAdmin(existing.ownerId, userId, userRole);
@@ -238,7 +297,12 @@ export class RestaurantsService {
     return { message: 'Restaurant deleted' };
   }
 
-  async addImages(id: string, images: string[], userId?: string, userRole?: string) {
+  async addImages(
+    id: string,
+    images: string[],
+    userId?: string,
+    userRole?: string,
+  ) {
     const existing = await this.restaurantModel.findById(id);
     if (!existing) throw new NotFoundException('Restaurant not found');
     this.assertOwnerOrAdmin(existing.ownerId, userId, userRole);
@@ -252,7 +316,12 @@ export class RestaurantsService {
     return this.formatRestaurant(updated);
   }
 
-  async removeImage(id: string, imageUrl: string, userId?: string, userRole?: string) {
+  async removeImage(
+    id: string,
+    imageUrl: string,
+    userId?: string,
+    userRole?: string,
+  ) {
     const existing = await this.restaurantModel.findById(id);
     if (!existing) throw new NotFoundException('Restaurant not found');
     this.assertOwnerOrAdmin(existing.ownerId, userId, userRole);
@@ -290,7 +359,7 @@ export class RestaurantsService {
           restaurantId: new Types.ObjectId(id),
           role: 'owner',
           status: RestaurantMembershipStatus.ACTIVE,
-        } as any);
+        });
       }
       await owner.save();
       await this.mailService.sendRestaurantDecisionEmail(
@@ -317,42 +386,49 @@ export class RestaurantsService {
       (entry: any) => entry.restaurantId?.toString() === id,
     );
     if (owner && membership) {
-      membership.status = status === RestaurantStatus.ACTIVE
-        ? RestaurantMembershipStatus.ACTIVE
-        : status === RestaurantStatus.REJECTED
-          ? RestaurantMembershipStatus.REJECTED
-          : status === RestaurantStatus.SUSPENDED
-            ? RestaurantMembershipStatus.SUSPENDED
-            : RestaurantMembershipStatus.PENDING;
+      membership.status =
+        status === RestaurantStatus.ACTIVE
+          ? RestaurantMembershipStatus.ACTIVE
+          : status === RestaurantStatus.REJECTED
+            ? RestaurantMembershipStatus.REJECTED
+            : status === RestaurantStatus.SUSPENDED
+              ? RestaurantMembershipStatus.SUSPENDED
+              : RestaurantMembershipStatus.PENDING;
       await owner.save();
     }
     return this.formatRestaurant(updated);
   }
 
-  async getAnalyticsOverview(
-    id: string,
-    userId?: string,
-    userRole?: string,
-  ) {
+  async getAnalyticsOverview(id: string, userId?: string, userRole?: string) {
     const restaurant = await this.restaurantModel.findById(id);
     if (!restaurant) throw new NotFoundException('Restaurant not found');
     this.assertOwnerOrAdmin(restaurant.ownerId, userId, userRole);
 
     const restaurantId = new Types.ObjectId(id);
     const [orderSummary, totalBookings] = await Promise.all([
-      this.orderModel.aggregate([
-        { $match: { restaurantId } },
-        {
-          $group: {
-            _id: null,
-            totalOrders: { $sum: 1 },
-            revenue: {
-              $sum: { $cond: [{ $eq: ['$status', 'delivered'] }, { $toDouble: '$total' }, 0] },
+      this.orderModel
+        .aggregate([
+          { $match: { restaurantId } },
+          {
+            $group: {
+              _id: null,
+              totalOrders: { $sum: 1 },
+              revenue: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$status', 'delivered'] },
+                    { $toDouble: '$total' },
+                    0,
+                  ],
+                },
+              },
+              pendingOrders: {
+                $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+              },
             },
-            pendingOrders: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
           },
-        },
-      ]).exec(),
+        ])
+        .exec(),
       this.bookingsModel.countDocuments({ restaurantId }).exec(),
     ]);
 
@@ -362,29 +438,52 @@ export class RestaurantsService {
       month: '2-digit',
       day: '2-digit',
     }).formatToParts(new Date());
-    const today = Object.fromEntries(todayParts.map(({ type, value }) => [type, value]));
+    const today = Object.fromEntries(
+      todayParts.map(({ type, value }) => [type, value]),
+    );
     const kigaliDate = `${today.year}-${today.month}-${today.day}`;
     const startOfToday = new Date(`${kigaliDate}T00:00:00+02:00`);
-    const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+    const startOfTomorrow = new Date(
+      startOfToday.getTime() + 24 * 60 * 60 * 1000,
+    );
     const paymentWindow = { $gte: startOfToday, $lt: startOfTomorrow };
-    const paymentSummary = await this.paymentModel.aggregate([
-      { $match: { status: { $in: [Payments.PAID, Payments.REFUNDED] }, updatedAt: paymentWindow } },
-      {
-        $lookup: {
-          from: this.orderModel.collection.name,
-          localField: 'orderId',
-          foreignField: '_id',
-          as: 'order',
+    const paymentSummary = await this.paymentModel
+      .aggregate([
+        {
+          $match: {
+            status: { $in: [Payments.PAID, Payments.REFUNDED] },
+            updatedAt: paymentWindow,
+          },
         },
-      },
-      { $unwind: '$order' },
-      { $match: { 'order.restaurantId': restaurantId } },
-      { $group: { _id: '$status', amount: { $sum: { $toDouble: '$amount' } } } },
-    ]).exec();
-    const todayPaid = paymentSummary.find((entry) => entry._id === Payments.PAID)?.amount || 0;
-    const todayRefunded = paymentSummary.find((entry) => entry._id === Payments.REFUNDED)?.amount || 0;
+        {
+          $lookup: {
+            from: this.orderModel.collection.name,
+            localField: 'orderId',
+            foreignField: '_id',
+            as: 'order',
+          },
+        },
+        { $unwind: '$order' },
+        { $match: { 'order.restaurantId': restaurantId } },
+        {
+          $group: {
+            _id: '$status',
+            amount: { $sum: { $toDouble: '$amount' } },
+          },
+        },
+      ])
+      .exec();
+    const todayPaid =
+      paymentSummary.find((entry) => entry._id === Payments.PAID)?.amount || 0;
+    const todayRefunded =
+      paymentSummary.find((entry) => entry._id === Payments.REFUNDED)?.amount ||
+      0;
     const todayRevenue = Number(todayPaid) - Number(todayRefunded);
-    const summary = orderSummary[0] || { totalOrders: 0, revenue: 0, pendingOrders: 0 };
+    const summary = orderSummary[0] || {
+      totalOrders: 0,
+      revenue: 0,
+      pendingOrders: 0,
+    };
 
     return {
       totalOrders: Number(summary.totalOrders || 0),
@@ -410,15 +509,24 @@ export class RestaurantsService {
     const restaurantId = new Types.ObjectId(id);
     const now = new Date();
     const dateParts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Africa/Kigali', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(now).reduce<Record<string, string>>((parts, part) => {
-      parts[part.type] = part.value;
-      return parts;
-    }, {});
-    const startDate = new Date(Date.UTC(
-      Number(dateParts.year), Number(dateParts.month) - 1,
-      Number(dateParts.day) - days + 1, -2,
-    ));
+      timeZone: 'Africa/Kigali',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .formatToParts(now)
+      .reduce<Record<string, string>>((parts, part) => {
+        parts[part.type] = part.value;
+        return parts;
+      }, {});
+    const startDate = new Date(
+      Date.UTC(
+        Number(dateParts.year),
+        Number(dateParts.month) - 1,
+        Number(dateParts.day) - days + 1,
+        -2,
+      ),
+    );
 
     const pipeline: any[] = [
       {
@@ -431,7 +539,11 @@ export class RestaurantsService {
       {
         $group: {
           _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$updatedAt', timezone: 'Africa/Kigali' },
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: '$updatedAt',
+              timezone: 'Africa/Kigali',
+            },
           },
           total: { $sum: { $toDouble: '$total' } },
         },
@@ -446,15 +558,26 @@ export class RestaurantsService {
     }
 
     const data = Array.from({ length: days }, (_, i) => {
-      const d = new Date(Date.UTC(
-        Number(dateParts.year), Number(dateParts.month) - 1,
-        Number(dateParts.day) - days + 1 + i,
-      ));
+      const d = new Date(
+        Date.UTC(
+          Number(dateParts.year),
+          Number(dateParts.month) - 1,
+          Number(dateParts.day) - days + 1 + i,
+        ),
+      );
       const key = d.toISOString().slice(0, 10);
       const raw = byDate[key] || 0;
-      const label = period === 'month'
-        ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-        : d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+      const label =
+        period === 'month'
+          ? d.toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              timeZone: 'UTC',
+            })
+          : d.toLocaleDateString('en-US', {
+              weekday: 'short',
+              timeZone: 'UTC',
+            });
       return {
         label,
         value: Math.round(raw * 100) / 100,
@@ -464,11 +587,7 @@ export class RestaurantsService {
     return data;
   }
 
-  async getPeakHours(
-    id: string,
-    userId?: string,
-    userRole?: string,
-  ) {
+  async getPeakHours(id: string, userId?: string, userRole?: string) {
     const restaurant = await this.restaurantModel.findById(id);
     if (!restaurant) throw new NotFoundException('Restaurant not found');
     this.assertOwnerOrAdmin(restaurant.ownerId, userId, userRole);
@@ -482,7 +601,9 @@ export class RestaurantsService {
       {
         $match: {
           restaurantId,
-          status: { $in: ['delivered', 'accepted', 'preparing', 'ready', 'on-way'] },
+          status: {
+            $in: ['delivered', 'accepted', 'preparing', 'ready', 'on-way'],
+          },
           createdAt: { $gte: thirtyDaysAgo, $lte: now },
         },
       },
@@ -504,7 +625,9 @@ export class RestaurantsService {
       return `${h - 12} PM`;
     };
 
-    const counts = new Map<number, number>(hourData.map((r) => [r._id, Number(r.count || 0)]));
+    const counts = new Map<number, number>(
+      hourData.map((r) => [r._id, Number(r.count || 0)]),
+    );
     return Array.from({ length: 24 }, (_, hour) => ({
       hour: formatHour(hour),
       count: counts.get(hour) || 0,
@@ -518,21 +641,32 @@ export class RestaurantsService {
   ): void {
     if (userRole === roles.ADMIN) return;
     const ownerStr =
-      ownerId instanceof Types.ObjectId ? ownerId.toString() : typeof ownerId === 'string' ? ownerId : undefined;
+      ownerId instanceof Types.ObjectId
+        ? ownerId.toString()
+        : typeof ownerId === 'string'
+          ? ownerId
+          : undefined;
     if (userRole === roles.OWNER && ownerStr && ownerStr === userId) return;
-    throw new UnauthorizedException('You are not authorized to modify this restaurant');
+    throw new UnauthorizedException(
+      'You are not authorized to modify this restaurant',
+    );
   }
 
   private formatRestaurant(r: restaurantDocument) {
     const obj = r.toObject();
     // After populate, ownerId may be an object, null, or an ObjectId string
-    const ownerObj = obj.ownerId as unknown as { name?: string; email?: string; _id?: Types.ObjectId } | null | Types.ObjectId;
-    const ownerData = ownerObj && typeof ownerObj === 'object' && 'name' in ownerObj
-      ? ownerObj as { name?: string; email?: string; _id?: Types.ObjectId }
-      : null;
-    const rawOwnerId = ownerObj && typeof ownerObj === 'object' && '_id' in ownerObj
-      ? (ownerObj as { _id?: Types.ObjectId })._id?.toString()
-      : ownerObj?.toString?.() ?? null;
+    const ownerObj = obj.ownerId as unknown as
+      | { name?: string; email?: string; _id?: Types.ObjectId }
+      | null
+      | Types.ObjectId;
+    const ownerData =
+      ownerObj && typeof ownerObj === 'object' && 'name' in ownerObj
+        ? ownerObj
+        : null;
+    const rawOwnerId =
+      ownerObj && typeof ownerObj === 'object' && '_id' in ownerObj
+        ? (ownerObj as { _id?: Types.ObjectId })._id?.toString()
+        : (ownerObj?.toString?.() ?? null);
 
     return {
       id: obj._id.toString(),

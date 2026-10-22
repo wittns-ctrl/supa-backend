@@ -88,8 +88,6 @@ export class AppleAuthService {
     }
 
     let idToken = body.id_token;
-    let accessToken: string | undefined;
-
     if (body.code) {
       const tokenResponse = await appleSignin.getAuthorizationToken(body.code, {
         clientID: config.clientID,
@@ -97,7 +95,6 @@ export class AppleAuthService {
         clientSecret: this.getClientSecret(config),
       });
       idToken = tokenResponse.id_token || idToken;
-      accessToken = tokenResponse.access_token;
     }
 
     if (!idToken) {
@@ -115,7 +112,8 @@ export class AppleAuthService {
 
     if (body.user) {
       try {
-        const parsed = typeof body.user === 'string' ? JSON.parse(body.user) : body.user;
+        const parsed =
+          typeof body.user === 'string' ? JSON.parse(body.user) : body.user;
         firstName = parsed?.name?.firstName || '';
         lastName = parsed?.name?.lastName || '';
         emailFromUserPayload = parsed?.email || '';
@@ -125,7 +123,8 @@ export class AppleAuthService {
     }
 
     const email = claims.email || emailFromUserPayload;
-    const emailVerified = claims.email_verified === true || claims.email_verified === 'true';
+    const emailVerified =
+      claims.email_verified === true || claims.email_verified === 'true';
     if (!email || !emailVerified) {
       throw new Error('Apple account did not provide a verified email address');
     }

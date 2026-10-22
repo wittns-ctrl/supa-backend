@@ -1,10 +1,22 @@
-import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { UpdateBookingDto } from './dto/update-booking.dto';
 import { Model, Types } from 'mongoose';
-import { bookings, bookingsDocument, reviewsEnums } from './schema/bookings.schema';
+import {
+  bookings,
+  bookingsDocument,
+  reviewsEnums,
+} from './schema/bookings.schema';
 import { InjectModel } from '@nestjs/mongoose';
-import { restaurant, restaurantDocument } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantDocument,
+} from 'src/restaurants/schema/restaurant.schema';
 import { User, UserDocument } from 'src/users/schema/user.schema';
 import { roles } from 'src/users/schema/user.schema';
 import { NotificationsService } from 'src/notifications/notifications.service';
@@ -40,11 +52,15 @@ export class BookingsService {
     return `${restaurantId}:${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
   }
 
-  private async sumActiveSeats(filter: Record<string, unknown>): Promise<number> {
-    const [result] = await this.bookingsModel.aggregate([
-      { $match: filter },
-      { $group: { _id: null, seats: { $sum: { $toDouble: '$guests' } } } },
-    ]).exec();
+  private async sumActiveSeats(
+    filter: Record<string, unknown>,
+  ): Promise<number> {
+    const [result] = await this.bookingsModel
+      .aggregate([
+        { $match: filter },
+        { $group: { _id: null, seats: { $sum: { $toDouble: '$guests' } } } },
+      ])
+      .exec();
     return Number(result?.seats || 0);
   }
 
@@ -68,10 +84,14 @@ export class BookingsService {
       throw new BadRequestException('Invalid restaurant id');
     }
 
-    const restaurantDoc = await this.restaurantModel.findById(createBookingDto.restaurantId);
+    const restaurantDoc = await this.restaurantModel.findById(
+      createBookingDto.restaurantId,
+    );
     if (!restaurantDoc) throw new NotFoundException('Restaurant not found');
     if (restaurantDoc.status !== 'active') {
-      throw new BadRequestException('This restaurant is not accepting bookings');
+      throw new BadRequestException(
+        'This restaurant is not accepting bookings',
+      );
     }
 
     const bookingDate = new Date(createBookingDto.bookingDate);
@@ -88,11 +108,15 @@ export class BookingsService {
     const maxDate = new Date();
     maxDate.setDate(maxDate.getDate() + 90);
     if (bookingDate > maxDate) {
-      throw new BadRequestException('Bookings can only be made up to 90 days in advance');
+      throw new BadRequestException(
+        'Bookings can only be made up to 90 days in advance',
+      );
     }
 
     if (!TIME_REGEX.test(createBookingDto.bookingTime || '')) {
-      throw new BadRequestException('bookingTime must be a valid time in HH:MM format');
+      throw new BadRequestException(
+        'bookingTime must be a valid time in HH:MM format',
+      );
     }
 
     const guests = Number(createBookingDto.guests);
@@ -110,36 +134,47 @@ export class BookingsService {
     // serialize on the read-then-insert.
     const dayKey = this.dayKey(createBookingDto.restaurantId, bookingDate);
     const createWithinLock = async () => {
-        const seatsTaken = await this.sumActiveSeats({
-          restaurantId: createBookingDto.restaurantId,
-          bookingDate: {
-            $gte: new Date(bookingDate.getFullYear(), bookingDate.getMonth(), bookingDate.getDate()),
-            $lt: new Date(bookingDate.getFullYear(), bookingDate.getMonth(), bookingDate.getDate() + 1),
-          },
-          status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
-        });
-        if (restaurantDoc.capacity && seatsTaken + guests > Number(restaurantDoc.capacity)) {
-          throw new BadRequestException(
-            'No availability for this date — the restaurant is fully booked',
-          );
-        }
+      const seatsTaken = await this.sumActiveSeats({
+        restaurantId: createBookingDto.restaurantId,
+        bookingDate: {
+          $gte: new Date(
+            bookingDate.getFullYear(),
+            bookingDate.getMonth(),
+            bookingDate.getDate(),
+          ),
+          $lt: new Date(
+            bookingDate.getFullYear(),
+            bookingDate.getMonth(),
+            bookingDate.getDate() + 1,
+          ),
+        },
+        status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
+      });
+      if (
+        restaurantDoc.capacity &&
+        seatsTaken + guests > Number(restaurantDoc.capacity)
+      ) {
+        throw new BadRequestException(
+          'No availability for this date — the restaurant is fully booked',
+        );
+      }
 
-        const created = await this.bookingsModel.create({
-          ...createBookingDto,
-          customerId,
-          guests,
-          bookingDate,
-          specialRequest: createBookingDto.specialRequest || '',
-          status: reviewsEnums.PENDING,
-        });
+      const created = await this.bookingsModel.create({
+        ...createBookingDto,
+        customerId,
+        guests,
+        bookingDate,
+        specialRequest: createBookingDto.specialRequest || '',
+        status: reviewsEnums.PENDING,
+      });
 
-        await this.notificationsService.create({
-          userId: restaurantDoc.ownerId.toString(),
-          title: 'New Table Booking',
-          message: `New booking request for ${restaurantDoc.name}`,
-        });
+      await this.notificationsService.create({
+        userId: restaurantDoc.ownerId.toString(),
+        title: 'New Table Booking',
+        message: `New booking request for ${restaurantDoc.name}`,
+      });
 
-        return this.formatBooking(created);
+      return this.formatBooking(created);
     };
 
     return this.redis.isConfigured
@@ -147,7 +182,14 @@ export class BookingsService {
       : this.withDayLock(dayKey, createWithinLock);
   }
 
-  async findAll(customerId?: string, restaurantId?: string, userId?: string, userRole?: string, page = 1, limit = 20) {
+  async findAll(
+    customerId?: string,
+    restaurantId?: string,
+    userId?: string,
+    userRole?: string,
+    page = 1,
+    limit = 20,
+  ) {
     // DB-level scoping instead of fetch-all-then-filter
     const filter: Record<string, unknown> = {};
 
@@ -155,11 +197,15 @@ export class BookingsService {
       if (customerId) filter.customerId = customerId;
       if (restaurantId) filter.restaurantId = restaurantId;
     } else if (userRole === roles.OWNER) {
-      const owned = await this.restaurantModel.find({ ownerId: userId }).select('_id');
+      const owned = await this.restaurantModel
+        .find({ ownerId: userId })
+        .select('_id');
       const ownedIds = owned.map((r) => r._id);
       if (restaurantId) {
         if (!ownedIds.some((id) => id.toString() === restaurantId)) {
-          throw new UnauthorizedException('You are not authorized to view these bookings');
+          throw new UnauthorizedException(
+            'You are not authorized to view these bookings',
+          );
         }
         filter.restaurantId = restaurantId;
       } else {
@@ -185,7 +231,9 @@ export class BookingsService {
       this.bookingsModel.countDocuments(filter),
     ]);
 
-    const formatted = await Promise.all(items.map((b) => this.formatBooking(b)));
+    const formatted = await Promise.all(
+      items.map((b) => this.formatBooking(b)),
+    );
     return {
       data: formatted,
       pagination: {
@@ -208,13 +256,22 @@ export class BookingsService {
     if (!booking) throw new NotFoundException('Booking not found');
 
     const grantedRoles = new Set((userRole || '').split(','));
-    const restaurant = booking.restaurantId && typeof booking.restaurantId === 'object'
-      ? booking.restaurantId as { ownerId?: Types.ObjectId }
-      : null;
-    const isOwner = grantedRoles.has(roles.OWNER) && restaurant?.ownerId?.toString() === userId;
+    const restaurant =
+      booking.restaurantId && typeof booking.restaurantId === 'object'
+        ? (booking.restaurantId as { ownerId?: Types.ObjectId })
+        : null;
+    const isOwner =
+      grantedRoles.has(roles.OWNER) &&
+      restaurant?.ownerId?.toString() === userId;
     const customerRef = booking.customerId as any;
-    const customerId = customerRef?._id?.toString?.() || customerRef?.toString?.();
-    if (grantedRoles.has(roles.CUSTOMER) && !isOwner && customerId === userId && booking.hiddenForCustomer) {
+    const customerId =
+      customerRef?._id?.toString?.() || customerRef?.toString?.();
+    if (
+      grantedRoles.has(roles.CUSTOMER) &&
+      !isOwner &&
+      customerId === userId &&
+      booking.hiddenForCustomer
+    ) {
       throw new NotFoundException('Booking not found');
     }
 
@@ -222,7 +279,12 @@ export class BookingsService {
     return this.formatBooking(booking);
   }
 
-  async update(id: string, updateBookingDto: UpdateBookingDto, userId?: string, userRole?: string) {
+  async update(
+    id: string,
+    updateBookingDto: UpdateBookingDto,
+    userId?: string,
+    userRole?: string,
+  ) {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid booking id');
     }
@@ -232,9 +294,17 @@ export class BookingsService {
     await this.assertCanAccessBookingId(existing, userId, userRole);
 
     const grantedRoles = new Set((userRole || '').split(','));
-    const existingRestaurant = await this.restaurantModel.findById(existing.restaurantId);
-    const isOwner = grantedRoles.has(roles.OWNER) && existingRestaurant?.ownerId?.toString() === userId;
-    if (updateBookingDto.status && grantedRoles.has(roles.CUSTOMER) && !isOwner) {
+    const existingRestaurant = await this.restaurantModel.findById(
+      existing.restaurantId,
+    );
+    const isOwner =
+      grantedRoles.has(roles.OWNER) &&
+      existingRestaurant?.ownerId?.toString() === userId;
+    if (
+      updateBookingDto.status &&
+      grantedRoles.has(roles.CUSTOMER) &&
+      !isOwner
+    ) {
       if (updateBookingDto.status !== reviewsEnums.CANCELLED) {
         throw new UnauthorizedException('Customers can only cancel bookings');
       }
@@ -263,23 +333,33 @@ export class BookingsService {
     const maxDate = new Date();
     maxDate.setDate(maxDate.getDate() + 90);
     if (nextDate > maxDate) {
-      throw new BadRequestException('Bookings can only be made up to 90 days in advance');
+      throw new BadRequestException(
+        'Bookings can only be made up to 90 days in advance',
+      );
     }
 
     const nextTime = updateBookingDto.bookingTime || existing.bookingTime;
     if (!TIME_REGEX.test(nextTime || '')) {
-      throw new BadRequestException('bookingTime must be a valid time in HH:MM format');
+      throw new BadRequestException(
+        'bookingTime must be a valid time in HH:MM format',
+      );
     }
 
-    const nextGuests = updateBookingDto.guests !== undefined
-      ? Number(updateBookingDto.guests)
-      : Number(existing.guests);
+    const nextGuests =
+      updateBookingDto.guests !== undefined
+        ? Number(updateBookingDto.guests)
+        : Number(existing.guests);
     if (!Number.isInteger(nextGuests) || nextGuests < 1 || nextGuests > 50) {
       throw new BadRequestException('Guests must be between 1 and 50');
     }
 
-    const restaurantDoc = await this.restaurantModel.findById(existing.restaurantId);
-    if (restaurantDoc?.capacity && nextGuests > Number(restaurantDoc.capacity)) {
+    const restaurantDoc = await this.restaurantModel.findById(
+      existing.restaurantId,
+    );
+    if (
+      restaurantDoc?.capacity &&
+      nextGuests > Number(restaurantDoc.capacity)
+    ) {
       throw new BadRequestException(
         `Party size exceeds restaurant capacity (${restaurantDoc.capacity})`,
       );
@@ -297,8 +377,16 @@ export class BookingsService {
             _id: { $ne: existing._id },
             restaurantId: existing.restaurantId,
             bookingDate: {
-              $gte: new Date(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate()),
-              $lt: new Date(nextDate.getFullYear(), nextDate.getMonth(), nextDate.getDate() + 1),
+              $gte: new Date(
+                nextDate.getFullYear(),
+                nextDate.getMonth(),
+                nextDate.getDate(),
+              ),
+              $lt: new Date(
+                nextDate.getFullYear(),
+                nextDate.getMonth(),
+                nextDate.getDate() + 1,
+              ),
             },
             status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
           });
@@ -314,7 +402,9 @@ export class BookingsService {
             id,
             {
               ...updateBookingDto,
-              ...(updateBookingDto.bookingDate ? { bookingDate: nextDate } : {}),
+              ...(updateBookingDto.bookingDate
+                ? { bookingDate: nextDate }
+                : {}),
               guests: nextGuests,
             },
             { returnDocument: 'after' },
@@ -359,15 +449,20 @@ export class BookingsService {
     }
 
     const customerId = booking.customerId.toString();
-    const restaurant = await this.restaurantModel.findById(booking.restaurantId);
+    const restaurant = await this.restaurantModel.findById(
+      booking.restaurantId,
+    );
     const ownerId = restaurant?.ownerId?.toString();
 
     const grantedRoles = new Set((userRole || '').split(','));
-    const isCustomer = grantedRoles.has(roles.CUSTOMER) && customerId === userId;
+    const isCustomer =
+      grantedRoles.has(roles.CUSTOMER) && customerId === userId;
     const isOwner = grantedRoles.has(roles.OWNER) && ownerId === userId;
     const isAdmin = grantedRoles.has(roles.ADMIN);
     if (!isCustomer && !isOwner && !isAdmin) {
-      throw new UnauthorizedException('You are not authorized to cancel this booking');
+      throw new UnauthorizedException(
+        'You are not authorized to cancel this booking',
+      );
     }
 
     const updated = await this.bookingsModel.findByIdAndUpdate(
@@ -387,7 +482,13 @@ export class BookingsService {
       {
         _id: id,
         customerId,
-        status: { $in: [reviewsEnums.CANCELLED, reviewsEnums.REJECTED, reviewsEnums.COMPLETED] },
+        status: {
+          $in: [
+            reviewsEnums.CANCELLED,
+            reviewsEnums.REJECTED,
+            reviewsEnums.COMPLETED,
+          ],
+        },
         hiddenForCustomer: { $ne: true },
       },
       { $set: { hiddenForCustomer: true } },
@@ -398,11 +499,17 @@ export class BookingsService {
     return { message: 'Booking removed from your history' };
   }
 
-  private async assertCanAccessBooking(b: bookingsDocument, userId?: string, userRole?: string) {
+  private async assertCanAccessBooking(
+    b: bookingsDocument,
+    userId?: string,
+    userRole?: string,
+  ) {
     const customerId = b.customerId?.toString();
     let ownerId: string | undefined;
     if (b.restaurantId && typeof b.restaurantId === 'object') {
-      ownerId = (b.restaurantId as { ownerId?: Types.ObjectId }).ownerId?.toString();
+      ownerId = (
+        b.restaurantId as { ownerId?: Types.ObjectId }
+      ).ownerId?.toString();
     } else if (b.restaurantId) {
       const r = await this.restaurantModel.findById(b.restaurantId);
       ownerId = r?.ownerId?.toString();
@@ -411,18 +518,28 @@ export class BookingsService {
     if (grantedRoles.has(roles.ADMIN)) return;
     if (grantedRoles.has(roles.OWNER) && ownerId === userId) return;
     if (grantedRoles.has(roles.CUSTOMER) && customerId === userId) return;
-    throw new UnauthorizedException('You are not authorized to access this booking');
+    throw new UnauthorizedException(
+      'You are not authorized to access this booking',
+    );
   }
 
-  private async assertCanAccessBookingId(b: bookingsDocument, userId?: string, userRole?: string) {
+  private async assertCanAccessBookingId(
+    b: bookingsDocument,
+    userId?: string,
+    userRole?: string,
+  ) {
     const customerId = b.customerId?.toString();
-    const restaurant = b.restaurantId ? await this.restaurantModel.findById(b.restaurantId) : null;
+    const restaurant = b.restaurantId
+      ? await this.restaurantModel.findById(b.restaurantId)
+      : null;
     const ownerId = restaurant?.ownerId?.toString();
     const grantedRoles = new Set((userRole || '').split(','));
     if (grantedRoles.has(roles.ADMIN)) return;
     if (grantedRoles.has(roles.OWNER) && ownerId === userId) return;
     if (grantedRoles.has(roles.CUSTOMER) && customerId === userId) return;
-    throw new UnauthorizedException('You are not authorized to modify this booking');
+    throw new UnauthorizedException(
+      'You are not authorized to modify this booking',
+    );
   }
 
   private async formatBooking(b: bookingsDocument) {
@@ -431,7 +548,10 @@ export class BookingsService {
     let address = '';
 
     if (obj.restaurantId && typeof obj.restaurantId === 'object') {
-      const r = obj.restaurantId as { name?: string; location?: { address?: string; city?: string } };
+      const r = obj.restaurantId as {
+        name?: string;
+        location?: { address?: string; city?: string };
+      };
       restaurantName = r.name || restaurantName;
       address = r.location ? `${r.location.address}, ${r.location.city}` : '';
     } else if (obj.restaurantId) {
@@ -458,9 +578,10 @@ export class BookingsService {
     return {
       id: obj._id.toString(),
       restaurant: restaurantName,
-      restaurantId: typeof obj.restaurantId === 'object'
-        ? (obj.restaurantId as { _id: Types.ObjectId })._id?.toString()
-        : obj.restaurantId?.toString(),
+      restaurantId:
+        typeof obj.restaurantId === 'object'
+          ? (obj.restaurantId as { _id: Types.ObjectId })._id?.toString()
+          : obj.restaurantId?.toString(),
       name: customerName,
       date: new Date(obj.bookingDate).toLocaleDateString('en-US', {
         weekday: 'short',

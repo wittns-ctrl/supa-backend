@@ -1,4 +1,10 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { RestaurantStatus } from '../schema/restaurant.schema';
 
 export class SetRestaurantStatusDto {

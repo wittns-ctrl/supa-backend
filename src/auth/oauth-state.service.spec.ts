@@ -11,13 +11,17 @@ describe('OAuthStateService', () => {
         records.set(record.state, record);
         return record;
       }),
-      findOneAndDelete: jest.fn((query: { state: string; expiresAt: { $gt: Date } }) => ({
-        exec: async () => {
-          const record = records.get(query.state);
-          records.delete(query.state);
-          return record && record.expiresAt > query.expiresAt.$gt ? record : null;
-        },
-      })),
+      findOneAndDelete: jest.fn(
+        (query: { state: string; expiresAt: { $gt: Date } }) => ({
+          exec: async () => {
+            const record = records.get(query.state);
+            records.delete(query.state);
+            return record && record.expiresAt > query.expiresAt.$gt
+              ? record
+              : null;
+          },
+        }),
+      ),
     };
     service = new OAuthStateService(model as any);
   });

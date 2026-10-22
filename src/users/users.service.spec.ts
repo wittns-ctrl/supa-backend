@@ -53,7 +53,10 @@ describe('UsersService', () => {
         { provide: getModelToken(order.name), useValue: OrderModel },
         { provide: getModelToken(bookings.name), useValue: BookingsModel },
         { provide: getModelToken(review.name), useValue: ReviewModel },
-        { provide: getModelToken(notification.name), useValue: NotificationModel },
+        {
+          provide: getModelToken(notification.name),
+          useValue: NotificationModel,
+        },
       ],
     }).compile();
 

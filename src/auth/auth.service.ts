@@ -11,10 +11,19 @@ import { resetAuthDto } from './dto/reset-auth.dto';
 import { ForgotAuthDto } from './dto/Forgot.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { AuthAccountType, RestaurantMembershipStatus, roles, User, UserDocument } from '../users/schema/user.schema';
-import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurants/schema/restaurant.schema';
+import {
+  AuthAccountType,
+  RestaurantMembershipStatus,
+  roles,
+  User,
+  UserDocument,
+} from '../users/schema/user.schema';
+import {
+  restaurant,
+  restaurantDocument,
+  RestaurantStatus,
+} from 'src/restaurants/schema/restaurant.schema';
 import { CreateOwnerAuthDto } from './dto/owner-signup-auth.dto';
-import { Types } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomInt, randomUUID, createHash, timingSafeEqual } from 'crypto';
@@ -36,7 +45,13 @@ function durationMs(value: string | undefined, fallback: number): number {
   const match = /^(\d+)(ms|s|m|h|d)$/.exec(value);
   if (!match) return fallback;
   const amount = Number(match[1]);
-  const units: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  const units: Record<string, number> = {
+    ms: 1,
+    s: 1000,
+    m: 60_000,
+    h: 3_600_000,
+    d: 86_400_000,
+  };
   return amount * units[match[2]];
 }
 
@@ -88,17 +103,28 @@ export class AuthService {
     return this.userModel.findOne({
       accountType,
       ...(primaryAdminOnly ? { isPrimaryAdmin: true } : {}),
-      email: { $regex: new RegExp(`^${normalized.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`, 'i') },
+      email: {
+        $regex: new RegExp(
+          `^${normalized.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`,
+          'i',
+        ),
+      },
     });
   }
 
   async createUser(signupdto: CreateAuthDto) {
     const normalizedEmail = this.normalizeEmail(signupdto.email);
-    const existingUser = await this.findUserByEmail(normalizedEmail, AuthAccountType.CUSTOMER);
+    const existingUser = await this.findUserByEmail(
+      normalizedEmail,
+      AuthAccountType.CUSTOMER,
+    );
 
     if (existingUser) {
       if (existingUser.isVerified) {
-        return { message: 'If this email can be registered, a verification code has been sent.' };
+        return {
+          message:
+            'If this email can be registered, a verification code has been sent.',
+        };
       }
       const salt = await bcrypt.genSalt(10);
       validateBcryptPassword(signupdto.password);
@@ -118,7 +144,10 @@ export class AuthService {
       await existingUser.save();
 
       await this.mailservice.sendOtpEmail(normalizedEmail, otp);
-      return { message: 'If this email can be registered, a verification code has been sent.' };
+      return {
+        message:
+          'If this email can be registered, a verification code has been sent.',
+      };
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -158,7 +187,10 @@ export class AuthService {
     }
 
     await this.mailservice.sendOtpEmail(normalizedEmail, otp);
-    return { message: 'If this email can be registered, a verification code has been sent.' };
+    return {
+      message:
+        'If this email can be registered, a verification code has been sent.',
+    };
   }
 
   async createOwnerAccount(signup: CreateOwnerAuthDto) {
@@ -166,21 +198,26 @@ export class AuthService {
     validateBcryptPassword(signup.password);
     const existing = await this.findUserByEmail(email, AuthAccountType.OWNER);
     if (existing?.isVerified) {
-      return { message: 'If this email can be registered, a verification code has been sent.' };
+      return {
+        message:
+          'If this email can be registered, a verification code has been sent.',
+      };
     }
 
-    const user = existing || new this.userModel({
-      name: signup.name,
-      email,
-      phone: signup.phone,
-      password: await bcrypt.hash(signup.password, 12),
-      role: roles.OWNER,
-      accountType: AuthAccountType.OWNER,
-      isVerified: false,
-      status: 'active',
-      restaurantMemberships: [],
-      authSessions: [],
-    });
+    const user =
+      existing ||
+      new this.userModel({
+        name: signup.name,
+        email,
+        phone: signup.phone,
+        password: await bcrypt.hash(signup.password, 12),
+        role: roles.OWNER,
+        accountType: AuthAccountType.OWNER,
+        isVerified: false,
+        status: 'active',
+        restaurantMemberships: [],
+        authSessions: [],
+      });
     if (existing) {
       validateBcryptPassword(signup.password);
       existing.password = await bcrypt.hash(signup.password, 12);
@@ -213,7 +250,7 @@ export class AuthService {
         });
       }
       memberships.push({
-        restaurantId: restaurant._id as Types.ObjectId,
+        restaurantId: restaurant._id,
         role: roles.OWNER,
         status: RestaurantMembershipStatus.PENDING,
       });
@@ -221,10 +258,16 @@ export class AuthService {
       await user.save();
     }
     await this.mailservice.sendOtpEmail(email, otp, 'owner');
-    return { message: 'If this email can be registered, a verification code has been sent.' };
+    return {
+      message:
+        'If this email can be registered, a verification code has been sent.',
+    };
   }
 
-  async verifyOtp(VerifyDto: emailverificationDto, accountType = AuthAccountType.CUSTOMER) {
+  async verifyOtp(
+    VerifyDto: emailverificationDto,
+    accountType = AuthAccountType.CUSTOMER,
+  ) {
     const user = await this.findUserByEmail(VerifyDto.email, accountType);
     const genericError = 'Invalid or expired verification code';
 
@@ -272,14 +315,18 @@ export class AuthService {
 
     if (accountType === AuthAccountType.OWNER) {
       try {
-        const restaurant = await this.restaurantModel.findOne({ ownerId: user._id }).sort({ createdAt: -1 });
+        const restaurant = await this.restaurantModel
+          .findOne({ ownerId: user._id })
+          .sort({ createdAt: -1 });
         await this.mailservice.sendOwnerVerificationCompleteEmail(
           user.email,
           user.name,
           restaurant?.name || 'your restaurant',
         );
       } catch (error) {
-        this.logger.warn(`Owner verification succeeded but the confirmation email could not be prepared: ${error.message}`);
+        this.logger.warn(
+          `Owner verification succeeded but the confirmation email could not be prepared: ${error.message}`,
+        );
       }
     }
 
@@ -291,7 +338,10 @@ export class AuthService {
     };
   }
 
-  async signin(signinDto: loginAuthDto, accountType = AuthAccountType.CUSTOMER) {
+  async signin(
+    signinDto: loginAuthDto,
+    accountType = AuthAccountType.CUSTOMER,
+  ) {
     const user = await this.findUserByEmail(
       signinDto.email,
       accountType,
@@ -299,15 +349,21 @@ export class AuthService {
     );
 
     if (!user) {
-      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
+      throw new UnauthorizedException(
+        'Unable to sign in with these credentials. Check your details and account status.',
+      );
     }
 
     if (!user.isVerified) {
-      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
+      throw new UnauthorizedException(
+        'Unable to sign in with these credentials. Check your details and account status.',
+      );
     }
 
     if (!user.password) {
-      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
+      throw new UnauthorizedException(
+        'Unable to sign in with these credentials. Check your details and account status.',
+      );
     }
 
     validateBcryptPassword(signinDto.password);
@@ -315,13 +371,17 @@ export class AuthService {
     const isMatch = await bcrypt.compare(signinDto.password, user.password);
 
     if (!isMatch) {
-      throw new UnauthorizedException('Unable to sign in with these credentials. Check your details and account status.');
+      throw new UnauthorizedException(
+        'Unable to sign in with these credentials. Check your details and account status.',
+      );
     }
 
     // Only identify a blocked account after valid credentials are supplied,
     // so this response cannot be used to enumerate blocked email addresses.
     if (user.status === 'blocked') {
-      throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
+      throw new UnauthorizedException(
+        'ACCOUNT_BLOCKED: Your account has been blocked by an administrator.',
+      );
     }
 
     const tokens = await this.generateTokens(user);
@@ -336,11 +396,15 @@ export class AuthService {
     const user = await this.findUserByEmail(normalized, accountType);
 
     if (!user) {
-      return { message: 'If an unverified account exists, a new code has been sent.' };
+      return {
+        message: 'If an unverified account exists, a new code has been sent.',
+      };
     }
 
     if (user.isVerified) {
-      return { message: 'If an unverified account exists, a new code has been sent.' };
+      return {
+        message: 'If an unverified account exists, a new code has been sent.',
+      };
     }
 
     const otp = randomInt(100000, 999999).toString();
@@ -357,7 +421,9 @@ export class AuthService {
       otp,
       accountType === AuthAccountType.OWNER ? 'owner' : 'customer',
     );
-    return { message: 'If an unverified account exists, a new code has been sent.' };
+    return {
+      message: 'If an unverified account exists, a new code has been sent.',
+    };
   }
 
   /**
@@ -372,11 +438,16 @@ export class AuthService {
     providerId: string;
   }) {
     const normalizedEmail = this.normalizeEmail(data.email);
-    let user = await this.findUserByEmail(normalizedEmail, AuthAccountType.CUSTOMER);
+    let user = await this.findUserByEmail(
+      normalizedEmail,
+      AuthAccountType.CUSTOMER,
+    );
 
     if (user) {
       if (user.status === 'blocked') {
-        throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
+        throw new UnauthorizedException(
+          'ACCOUNT_BLOCKED: Your account has been blocked by an administrator.',
+        );
       }
       // Link OAuth provider if this is their first OAuth login
       if (!user.oauthProvider && user.email.toLowerCase() === normalizedEmail) {
@@ -421,11 +492,13 @@ export class AuthService {
       accountType: user.accountType,
       sid: sessionId,
     };
-      const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
+    const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
     const refreshTtl: any = process.env.JWT_REFRESH_TTL || '7d';
     const refreshSecret = process.env.JWT_REFRESH;
     if (!refreshSecret) {
-      throw new Error('JWT_REFRESH is not configured — refusing to issue tokens');
+      throw new Error(
+        'JWT_REFRESH is not configured — refusing to issue tokens',
+      );
     }
     const refreshtoken = this.jwtservice.sign(payload as any, {
       secret: refreshSecret,
@@ -434,21 +507,28 @@ export class AuthService {
 
     const hashedrefreshtoken = hashToken(refreshtoken);
     const now = Date.now();
-    user.authSessions = (user.authSessions || []).filter((session: any) =>
-      new Date(session.expiresAt).getTime() > now,
-    ) as any;
+    user.authSessions = (user.authSessions || []).filter(
+      (session: any) => new Date(session.expiresAt).getTime() > now,
+    );
     user.authSessions.push({
       sessionId,
       refreshTokenHash: hashedrefreshtoken,
-      expiresAt: new Date(now + durationMs(String(refreshTtl), REFRESH_DEFAULT_MS)),
-    } as any);
+      expiresAt: new Date(
+        now + durationMs(String(refreshTtl), REFRESH_DEFAULT_MS),
+      ),
+    });
     await user.save();
 
-    const accessToken = this.jwtservice.sign(payload as any, { expiresIn: accessTtl });
+    const accessToken = this.jwtservice.sign(payload as any, {
+      expiresIn: accessTtl,
+    });
     return { accessToken, refreshToken: refreshtoken };
   }
 
-  async ForgotPassword(forgotDto: ForgotAuthDto, accountType = AuthAccountType.CUSTOMER) {
+  async ForgotPassword(
+    forgotDto: ForgotAuthDto,
+    accountType = AuthAccountType.CUSTOMER,
+  ) {
     const user = await this.findUserByEmail(forgotDto.email, accountType);
 
     const resettoken = randomUUID();
@@ -467,7 +547,7 @@ export class AuthService {
       const link = `${frontendUrl}/reset-password?token=${resettoken}&accountType=${accountType}`;
       try {
         await this.mailservice.sendResetEmail(forgotDto.email, link);
-      } catch (_err) {
+      } catch {
         // swallow mail errors so we don't leak enumeration
       }
     }
@@ -478,7 +558,10 @@ export class AuthService {
     };
   }
 
-  async resetpassword(resetDto: resetAuthDto, accountType = AuthAccountType.CUSTOMER) {
+  async resetpassword(
+    resetDto: resetAuthDto,
+    accountType = AuthAccountType.CUSTOMER,
+  ) {
     // Token is hashed with SHA-256 before lookup → O(1) indexed query instead
     // of scanning and bcrypt-comparing up to 50 candidate rows per request.
     const hashedToken = hashToken(resetDto.token);
@@ -527,7 +610,7 @@ export class AuthService {
     if (caller?.sessionId) {
       user.authSessions = (user.authSessions || []).filter(
         (session: any) => session.sessionId !== caller.sessionId,
-      ) as any;
+      );
     } else {
       user.authSessions = [];
     }
@@ -537,7 +620,10 @@ export class AuthService {
     return { message: 'user logged out successfully' };
   }
 
-  async refreshAccessToken(refreshToken: string, accountType = AuthAccountType.CUSTOMER) {
+  async refreshAccessToken(
+    refreshToken: string,
+    accountType = AuthAccountType.CUSTOMER,
+  ) {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token is required');
     }
@@ -552,31 +638,46 @@ export class AuthService {
     }
 
     const userId = payload.sub;
-    const user = await this.userModel.findById(userId).select('+isPrimaryAdmin');
-    if (payload.accountType !== accountType || user?.accountType !== accountType) {
-      throw new UnauthorizedException('Refresh session belongs to another account type');
+    const user = await this.userModel
+      .findById(userId)
+      .select('+isPrimaryAdmin');
+    if (
+      payload.accountType !== accountType ||
+      user?.accountType !== accountType
+    ) {
+      throw new UnauthorizedException(
+        'Refresh session belongs to another account type',
+      );
     }
     if (
       accountType === AuthAccountType.ADMIN &&
       user?.isPrimaryAdmin !== true
     ) {
-      throw new UnauthorizedException('Admin access is not enabled for this account');
+      throw new UnauthorizedException(
+        'Admin access is not enabled for this account',
+      );
     }
     if (!user || !payload.sid || !user.authSessions?.length) {
       throw new UnauthorizedException('Refresh token has been revoked');
     }
 
     if (user.status === 'blocked') {
-      throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
+      throw new UnauthorizedException(
+        'ACCOUNT_BLOCKED: Your account has been blocked by an administrator.',
+      );
     }
 
     // Constant-time comparison of SHA-256 hashes
     const providedHash = hashToken(refreshToken);
-    const session: any = user.authSessions.find((entry: any) => entry.sessionId === payload.sid);
+    const session: any = user.authSessions.find(
+      (entry: any) => entry.sessionId === payload.sid,
+    );
     if (!session || new Date(session.expiresAt).getTime() <= Date.now()) {
       throw new UnauthorizedException('Refresh token has been revoked');
     }
-    const { iat: _iat, exp: _exp, ...claims } = payload;
+    const claims = { ...payload };
+    delete claims.iat;
+    delete claims.exp;
     if (!safeEqualHex(providedHash, session.refreshTokenHash)) {
       // Grace window: an in-flight rotation from another tab may still be
       // re-using the just-replaced token. Accept it once and return the
@@ -584,15 +685,16 @@ export class AuthService {
       if (
         session.previousRefreshTokenHash &&
         session.previousRefreshTokenExpiresAt &&
-        new Date(session.previousRefreshTokenExpiresAt).getTime() > Date.now() &&
+        new Date(session.previousRefreshTokenExpiresAt).getTime() >
+          Date.now() &&
         safeEqualHex(providedHash, session.previousRefreshTokenHash)
       ) {
         this.logger.debug(
           `Refresh grace period used for user ${user._id} — concurrent refresh absorbed`,
-       );
+        );
         const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
         return {
-          accessToken: this.jwtservice.sign(claims as any, {
+          accessToken: this.jwtservice.sign(claims, {
             expiresIn: accessTtl,
           }),
           refreshToken, // echo the still-graceful token back
@@ -602,7 +704,7 @@ export class AuthService {
 
       user.authSessions = (user.authSessions || []).filter(
         (entry: any) => entry.sessionId !== payload.sid,
-      ) as any;
+      );
       await user.save().catch(() => undefined);
       throw new UnauthorizedException(
         'Reuse detected — please re-login with your credentials',
@@ -610,15 +712,19 @@ export class AuthService {
     }
 
     session.previousRefreshTokenHash = session.refreshTokenHash;
-    session.previousRefreshTokenExpiresAt = new Date(Date.now() + REFRESH_GRACE_MS);
-    const nextRefreshToken = this.jwtservice.sign(claims as any, {
+    session.previousRefreshTokenExpiresAt = new Date(
+      Date.now() + REFRESH_GRACE_MS,
+    );
+    const nextRefreshToken = this.jwtservice.sign(claims, {
       secret: process.env.JWT_REFRESH,
       expiresIn: (process.env.JWT_REFRESH_TTL || '7d') as any,
     });
     session.refreshTokenHash = hashToken(nextRefreshToken);
     await user.save();
     const accessTtl: any = process.env.JWT_ACCESS_TTL || '15m';
-    const accessToken = this.jwtservice.sign(claims as any, { expiresIn: accessTtl });
+    const accessToken = this.jwtservice.sign(claims, {
+      expiresIn: accessTtl,
+    });
     return {
       accessToken,
       refreshToken: nextRefreshToken,

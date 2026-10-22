@@ -30,7 +30,11 @@ export class MenusController {
     @Body() createMenuDto: CreateMenuDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.menusService.create(createMenuDto, user.id, effectiveRestaurantRole(user));
+    return this.menusService.create(
+      createMenuDto,
+      user.id,
+      effectiveRestaurantRole(user),
+    );
   }
 
   @Get()
@@ -73,7 +77,12 @@ export class MenusController {
     @Body() updateMenuDto: UpdateMenuDto,
     @CurrentUser() user: { id: string; role: string },
   ) {
-    return this.menusService.update(id, updateMenuDto, user.id, effectiveRestaurantRole(user));
+    return this.menusService.update(
+      id,
+      updateMenuDto,
+      user.id,
+      effectiveRestaurantRole(user),
+    );
   }
 
   @Delete(':id')

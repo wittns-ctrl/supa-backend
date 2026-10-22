@@ -38,11 +38,14 @@ export class NotificationsController {
   @Patch('read-all')
   readAll(@CurrentUser() user: { id: string; role: string }) {
     // Non-admins can only mark their own notifications read
-    return this.notificationsService.markAllAsRead(user.id, user.role);
+    return this.notificationsService.markAllAsRead(user.id);
   }
 
   @Patch(':id/read')
-  markRead(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
+  markRead(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
     return this.notificationsService.markAsRead(id, user.id, user.role);
   }
 
@@ -57,7 +60,10 @@ export class NotificationsController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser() user: { id: string; role: string }) {
+  remove(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string; role: string },
+  ) {
     return this.notificationsService.remove(id, user.id, user.role);
   }
 }

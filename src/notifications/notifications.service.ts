@@ -1,8 +1,15 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { notification, notificationDocument } from './schema/notifications.schema';
+import {
+  notification,
+  notificationDocument,
+} from './schema/notifications.schema';
 import { Model, Types } from 'mongoose';
 import { roles } from 'src/users/schema/user.schema';
 import { User, UserDocument } from 'src/users/schema/user.schema';
@@ -40,13 +47,19 @@ export class NotificationsService {
         .sort({ createdAt: -1 })
         .limit(100)
         .lean();
-      const recipientIds = [...new Set(items.map((item) => item.userId.toString()))];
+      const recipientIds = [
+        ...new Set(items.map((item) => item.userId.toString())),
+      ];
       const recipients = await this.userModel
         .find({ _id: { $in: recipientIds } })
         .select('name email accountType role')
         .lean();
-      const recipientById = new Map(recipients.map((user) => [user._id.toString(), user]));
-      return items.map((item) => this.format(item, recipientById.get(item.userId.toString())));
+      const recipientById = new Map(
+        recipients.map((user) => [user._id.toString(), user]),
+      );
+      return items.map((item) =>
+        this.format(item, recipientById.get(item.userId.toString())),
+      );
     }
     const items = await this.notificationModel
       .find({ userId: new Types.ObjectId(userId) })
@@ -61,7 +74,9 @@ export class NotificationsService {
 
     const ownerId = updated.userId.toString();
     if (userRole !== roles.ADMIN && ownerId !== userId) {
-      throw new UnauthorizedException('You are not authorized to modify this notification');
+      throw new UnauthorizedException(
+        'You are not authorized to modify this notification',
+      );
     }
 
     updated.isRead = true;
@@ -69,7 +84,7 @@ export class NotificationsService {
     return this.format(updated);
   }
 
-  async markAllAsRead(userId: string, userRole: string) {
+  async markAllAsRead(userId: string) {
     // Admins mark only their own notifications here too — a platform-wide
     // "mark everything read" needs an explicit admin endpoint + filter.
     const filter: Record<string, unknown> = { userId, isRead: false };
@@ -78,7 +93,9 @@ export class NotificationsService {
   }
 
   async update(id: string, dto: UpdateNotificationDto) {
-    const updated = await this.notificationModel.findByIdAndUpdate(id, dto, { returnDocument: 'after' });
+    const updated = await this.notificationModel.findByIdAndUpdate(id, dto, {
+      returnDocument: 'after',
+    });
     if (!updated) throw new NotFoundException('Notification not found');
     return this.format(updated);
   }
@@ -91,27 +108,35 @@ export class NotificationsService {
     if (!deleted) throw new NotFoundException('Notification not found');
 
     if (userRole !== roles.ADMIN && deleted.userId.toString() !== userId) {
-      throw new UnauthorizedException('You are not authorized to delete this notification');
+      throw new UnauthorizedException(
+        'You are not authorized to delete this notification',
+      );
     }
 
     await this.notificationModel.findByIdAndDelete(id);
     return { message: 'Notification dismissed' };
   }
 
-  private format(n: notificationDocument | Record<string, any>, recipient?: Record<string, any>) {
-    const obj = typeof (n as notificationDocument).toObject === 'function'
-      ? (n as notificationDocument).toObject()
-      : n;
+  private format(
+    n: notificationDocument | Record<string, any>,
+    recipient?: Record<string, any>,
+  ) {
+    const obj =
+      typeof (n as notificationDocument).toObject === 'function'
+        ? (n as notificationDocument).toObject()
+        : n;
     const userRef = obj.userId;
     return {
       id: obj._id.toString(),
       userId: userRef?._id?.toString?.() || userRef.toString(),
-      recipient: recipient ? {
-        id: recipient._id.toString(),
-        name: recipient.name,
-        email: recipient.email,
-        accountType: recipient.accountType || recipient.role,
-      } : undefined,
+      recipient: recipient
+        ? {
+            id: recipient._id.toString(),
+            name: recipient.name,
+            email: recipient.email,
+            accountType: recipient.accountType || recipient.role,
+          }
+        : undefined,
       title: obj.title,
       message: obj.message,
       details: obj.details || undefined,

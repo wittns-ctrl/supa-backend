@@ -41,8 +41,10 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
         const uri =
           configService.get<string>('MONGO_URI') ||
           'mongodb://localhost:27017/supameal';
-        const maxPoolSize = Number(configService.get('MONGO_MAX_POOL_SIZE')) || 50;
-        const minPoolSize = Number(configService.get('MONGO_MIN_POOL_SIZE')) || 2;
+        const maxPoolSize =
+          Number(configService.get('MONGO_MAX_POOL_SIZE')) || 50;
+        const minPoolSize =
+          Number(configService.get('MONGO_MIN_POOL_SIZE')) || 2;
         return {
           uri,
           serverSelectionTimeoutMS: 5000,
@@ -65,7 +67,8 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
         return {
           secret,
           signOptions: {
-            expiresIn: (configService.get<string>('JWT_ACCESS_TTL') || '15m') as any,
+            expiresIn: (configService.get<string>('JWT_ACCESS_TTL') ||
+              '15m') as any,
           },
         };
       },
@@ -79,7 +82,8 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
           ttl: Number(configService.get('THROTTLE_TTL_MS')) || 60_000,
           limit: Number(configService.get('THROTTLE_LIMIT')) || 100,
         };
-        if (redis.isConfigured) throttler.storage = new RedisThrottlerStorage(redis);
+        if (redis.isConfigured)
+          throttler.storage = new RedisThrottlerStorage(redis);
         return [throttler];
       },
     }),

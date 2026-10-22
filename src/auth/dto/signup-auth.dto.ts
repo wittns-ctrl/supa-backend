@@ -1,4 +1,13 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsIn, Matches, MinLength, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsEmail,
+  IsIn,
+  Matches,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ValidateNested } from 'class-validator';
 
@@ -35,7 +44,8 @@ export class CreateAuthDto {
   @IsOptional()
   @IsString()
   @Matches(/^\+?[0-9\s\-()]{7,20}$/, {
-    message: 'Phone must be a valid phone number (7-20 digits, may start with +)',
+    message:
+      'Phone must be a valid phone number (7-20 digits, may start with +)',
   })
   phone?: string;
 
@@ -43,7 +53,9 @@ export class CreateAuthDto {
   // its own endpoint and remains pending until administrator approval.
   @IsOptional()
   @IsString()
-  @IsIn(['customer'], { message: 'Public signup only supports customer accounts' })
+  @IsIn(['customer'], {
+    message: 'Public signup only supports customer accounts',
+  })
   role?: string;
 
   @IsOptional()

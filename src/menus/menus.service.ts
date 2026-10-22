@@ -1,9 +1,18 @@
-import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { CreateMenuDto } from './dto/create-menu.dto';
 import { UpdateMenuDto } from './dto/update-menu.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { menu, menuDocument } from './schema/menu.schema';
-import { restaurant, restaurantDocument, RestaurantStatus } from 'src/restaurants/schema/restaurant.schema';
+import {
+  restaurant,
+  restaurantDocument,
+  RestaurantStatus,
+} from 'src/restaurants/schema/restaurant.schema';
 import { Model, Types } from 'mongoose';
 import { roles } from 'src/users/schema/user.schema';
 
@@ -31,7 +40,10 @@ export class MenusService {
       restaurantId instanceof Types.ObjectId
         ? restaurantId
         : new Types.ObjectId(restaurantId);
-    const found = await this.restaurantModel.findById(rId).select('ownerId').exec();
+    const found = await this.restaurantModel
+      .findById(rId)
+      .select('ownerId')
+      .exec();
     if (!found) throw new NotFoundException('Restaurant not found');
     const ownerStr = found.ownerId?.toString();
     if (!ownerStr || userId !== ownerStr) {
@@ -41,8 +53,16 @@ export class MenusService {
     }
   }
 
-  async create(createMenuDto: CreateMenuDto, userId?: string, userRole?: string) {
-    await this.assertRestaurantOwner(createMenuDto.restaurant, userId, userRole);
+  async create(
+    createMenuDto: CreateMenuDto,
+    userId?: string,
+    userRole?: string,
+  ) {
+    await this.assertRestaurantOwner(
+      createMenuDto.restaurant,
+      userId,
+      userRole,
+    );
     const created = await this.menuModel.create({
       ...createMenuDto,
       restaurant: createMenuDto.restaurant,
@@ -54,27 +74,46 @@ export class MenusService {
     return this.formatMenu(created);
   }
 
-  async findAll(restaurantId?: string, pageQuery?: string, limitQuery?: string) {
+  async findAll(
+    restaurantId?: string,
+    pageQuery?: string,
+    limitQuery?: string,
+  ) {
     const requestedPage = pageQuery !== undefined || limitQuery !== undefined;
     const page = Math.max(parseInt(pageQuery || '1', 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(limitQuery || (requestedPage ? '20' : '50'), 10) || 50, 1), 100);
+    const limit = Math.min(
+      Math.max(
+        parseInt(limitQuery || (requestedPage ? '20' : '50'), 10) || 50,
+        1,
+      ),
+      100,
+    );
     let items: any[];
     let total = 0;
 
     if (restaurantId) {
-      if (!Types.ObjectId.isValid(restaurantId)) throw new BadRequestException('Invalid restaurant id');
+      if (!Types.ObjectId.isValid(restaurantId))
+        throw new BadRequestException('Invalid restaurant id');
       const approved = await this.restaurantModel.exists({
         _id: restaurantId,
         isApproved: true,
         status: RestaurantStatus.ACTIVE,
       });
-      if (!approved) return requestedPage
-        ? { data: [], pagination: { page, limit, total: 0, totalPages: 0 } }
-        : [];
+      if (!approved)
+        return requestedPage
+          ? { data: [], pagination: { page, limit, total: 0, totalPages: 0 } }
+          : [];
       const filter = { restaurant: new Types.ObjectId(restaurantId) };
       const [rows, count] = await Promise.all([
-        this.menuModel.find(filter).sort({ category: 1, _id: 1 }).skip((page - 1) * limit).limit(limit).exec(),
-        requestedPage ? this.menuModel.countDocuments(filter).exec() : Promise.resolve(0),
+        this.menuModel
+          .find(filter)
+          .sort({ category: 1, _id: 1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .exec(),
+        requestedPage
+          ? this.menuModel.countDocuments(filter).exec()
+          : Promise.resolve(0),
       ]);
       items = rows;
       total = count;
@@ -85,11 +124,17 @@ export class MenusService {
             from: this.restaurantModel.collection.name,
             let: { restaurantId: '$restaurant' },
             pipeline: [
-              { $match: { $expr: { $and: [
-                { $eq: ['$_id', '$$restaurantId'] },
-                { $eq: ['$isApproved', true] },
-                { $eq: ['$status', RestaurantStatus.ACTIVE] },
-              ] } } },
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$_id', '$$restaurantId'] },
+                      { $eq: ['$isApproved', true] },
+                      { $eq: ['$status', RestaurantStatus.ACTIVE] },
+                    ],
+                  },
+                },
+              },
               { $project: { _id: 1 } },
             ],
             as: 'visibleRestaurant',
@@ -98,14 +143,18 @@ export class MenusService {
         { $match: { 'visibleRestaurant.0': { $exists: true } } },
       ];
       const [rows, count] = await Promise.all([
-        this.menuModel.aggregate([
-          ...visibilityStages,
-          { $sort: { category: 1, _id: 1 } },
-          { $skip: (page - 1) * limit },
-          { $limit: limit },
-        ]).exec(),
+        this.menuModel
+          .aggregate([
+            ...visibilityStages,
+            { $sort: { category: 1, _id: 1 } },
+            { $skip: (page - 1) * limit },
+            { $limit: limit },
+          ])
+          .exec(),
         requestedPage
-          ? this.menuModel.aggregate([...visibilityStages, { $count: 'total' }]).exec()
+          ? this.menuModel
+              .aggregate([...visibilityStages, { $count: 'total' }])
+              .exec()
           : Promise.resolve([]),
       ]);
       items = rows;
@@ -114,26 +163,61 @@ export class MenusService {
 
     const data = items.map((m) => this.formatMenu(m));
     return requestedPage
-      ? { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+      ? {
+          data,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+          },
+        }
       : data;
   }
 
-  async findAllForOwner(restaurantId: string, userId: string, userRole?: string, pageQuery?: string, limitQuery?: string) {
+  async findAllForOwner(
+    restaurantId: string,
+    userId: string,
+    userRole?: string,
+    pageQuery?: string,
+    limitQuery?: string,
+  ) {
     if (!Types.ObjectId.isValid(restaurantId)) {
       throw new BadRequestException('Invalid restaurant id');
     }
     await this.assertRestaurantOwner(restaurantId, userId, userRole);
     const requestedPage = pageQuery !== undefined || limitQuery !== undefined;
     const page = Math.max(parseInt(pageQuery || '1', 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(limitQuery || (requestedPage ? '20' : '50'), 10) || 50, 1), 100);
+    const limit = Math.min(
+      Math.max(
+        parseInt(limitQuery || (requestedPage ? '20' : '50'), 10) || 50,
+        1,
+      ),
+      100,
+    );
     const filter = { restaurant: new Types.ObjectId(restaurantId) };
     const [items, total] = await Promise.all([
-      this.menuModel.find(filter).sort({ category: 1, _id: 1 }).skip((page - 1) * limit).limit(limit).exec(),
-      requestedPage ? this.menuModel.countDocuments(filter).exec() : Promise.resolve(0),
+      this.menuModel
+        .find(filter)
+        .sort({ category: 1, _id: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+      requestedPage
+        ? this.menuModel.countDocuments(filter).exec()
+        : Promise.resolve(0),
     ]);
     const data = items.map((m) => this.formatMenu(m));
     return requestedPage
-      ? { data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }
+      ? {
+          data,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+          },
+        }
       : data;
   }
 
@@ -143,16 +227,24 @@ export class MenusService {
     }
     const item = await this.menuModel.findById(id);
     if (!item) throw new NotFoundException('Menu item not found');
-    const restaurant = await this.restaurantModel.findOne({
-      _id: item.restaurant,
-      isApproved: true,
-      status: RestaurantStatus.ACTIVE,
-    }).select('_id').exec();
+    const restaurant = await this.restaurantModel
+      .findOne({
+        _id: item.restaurant,
+        isApproved: true,
+        status: RestaurantStatus.ACTIVE,
+      })
+      .select('_id')
+      .exec();
     if (!restaurant) throw new NotFoundException('Menu item not found');
     return this.formatMenu(item);
   }
 
-  async update(id: string, updateMenuDto: UpdateMenuDto, userId?: string, userRole?: string) {
+  async update(
+    id: string,
+    updateMenuDto: UpdateMenuDto,
+    userId?: string,
+    userRole?: string,
+  ) {
     const existing = await this.menuModel.findById(id);
     if (!existing) throw new NotFoundException('Menu item not found');
     await this.assertRestaurantOwner(existing.restaurant, userId, userRole);
@@ -173,9 +265,10 @@ export class MenusService {
   }
 
   private formatMenu(m: menuDocument | Record<string, any>) {
-    const obj = typeof (m as menuDocument).toObject === 'function'
-      ? (m as menuDocument).toObject()
-      : m as Record<string, any>;
+    const obj =
+      typeof (m as menuDocument).toObject === 'function'
+        ? (m as menuDocument).toObject()
+        : (m as Record<string, any>);
     return {
       id: obj._id.toString(),
       restaurantId: obj.restaurant.toString(),

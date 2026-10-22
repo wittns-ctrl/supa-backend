@@ -10,7 +10,8 @@ export class OAuthStateRecord {
   expiresAt!: Date;
 }
 
-export const OAuthStateRecordSchema = SchemaFactory.createForClass(OAuthStateRecord);
+export const OAuthStateRecordSchema =
+  SchemaFactory.createForClass(OAuthStateRecord);
 OAuthStateRecordSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 @Schema({ timestamps: true })
@@ -25,5 +26,6 @@ export class OAuthCodeRecord {
   expiresAt!: Date;
 }
 
-export const OAuthCodeRecordSchema = SchemaFactory.createForClass(OAuthCodeRecord);
+export const OAuthCodeRecordSchema =
+  SchemaFactory.createForClass(OAuthCodeRecord);
 OAuthCodeRecordSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

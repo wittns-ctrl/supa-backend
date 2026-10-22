@@ -63,7 +63,8 @@ export class UpdateRestaurantDto {
 
   @IsOptional()
   @Matches(/^\+?[0-9\s\-()]{7,20}$/, {
-    message: 'Phone must be a valid phone number (7-20 chars, may start with +)',
+    message:
+      'Phone must be a valid phone number (7-20 chars, may start with +)',
   })
   phone?: string;
 

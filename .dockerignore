@@ -5,9 +5,14 @@ test
 *.spec.ts
 .env
 .env.*
-!.env.example
+.gitignore
 .git
 .github
 *.log
+logs
+uploads
+.vscode
+.idea
+.DS_Store
 Dockerfile
 .dockerignore

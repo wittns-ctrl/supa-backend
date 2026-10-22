@@ -2,7 +2,13 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { AuthAccountType, User, UserDocument, UserStatus, roles } from 'src/users/schema/user.schema';
+import {
+  AuthAccountType,
+  User,
+  UserDocument,
+  UserStatus,
+  roles,
+} from 'src/users/schema/user.schema';
 
 @Injectable()
 export class SeedService implements OnModuleInit {
@@ -19,7 +25,9 @@ export class SeedService implements OnModuleInit {
     const email = process.env.DEMO_ADMIN_EMAIL?.trim().toLowerCase();
     const password = process.env.DEMO_ADMIN_PASSWORD;
     if (!email || !password) {
-      this.logger.warn('No primary admin bootstrap credentials were provided; existing database admin access is unchanged.');
+      this.logger.warn(
+        'No primary admin bootstrap credentials were provided; existing database admin access is unchanged.',
+      );
       return;
     }
     if (Buffer.byteLength(password, 'utf8') > 72) {
@@ -27,10 +35,18 @@ export class SeedService implements OnModuleInit {
     }
 
     await this.userModel.updateMany(
-      { accountType: AuthAccountType.ADMIN, isPrimaryAdmin: true, email: { $ne: email } },
+      {
+        accountType: AuthAccountType.ADMIN,
+        isPrimaryAdmin: true,
+        email: { $ne: email },
+      },
       {
         $set: { isPrimaryAdmin: false, authSessions: [] },
-        $unset: { refreshToken: 1, previousRefreshToken: 1, previousRefreshTokenExpiresAt: 1 },
+        $unset: {
+          refreshToken: 1,
+          previousRefreshToken: 1,
+          previousRefreshTokenExpiresAt: 1,
+        },
       },
     );
     const existing = await this.userModel

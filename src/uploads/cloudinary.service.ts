@@ -1,4 +1,8 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
 import { Readable } from 'stream';
@@ -25,12 +29,22 @@ export class CloudinaryService {
     this.isConfigured = Boolean(cloudName && apiKey && apiSecret);
 
     if (this.isConfigured) {
-      cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+      cloudinary.config({
+        cloud_name: cloudName,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        secure: true,
+      });
     }
   }
 
-  async upload(buffer: Buffer, format: string, publicId: string): Promise<CloudinaryUpload> {
-    if (!this.isConfigured) throw new ServiceUnavailableException('Cloudinary is not configured');
+  async upload(
+    buffer: Buffer,
+    format: string,
+    publicId: string,
+  ): Promise<CloudinaryUpload> {
+    if (!this.isConfigured)
+      throw new ServiceUnavailableException('Cloudinary is not configured');
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -43,8 +57,14 @@ export class CloudinaryService {
         },
         (error, result) => {
           if (error || !result?.secure_url || !result.public_id) {
-            this.logger.error(`Cloudinary upload failed: ${error?.message || 'No asset returned'}`);
-            reject(new ServiceUnavailableException('Image storage is temporarily unavailable'));
+            this.logger.error(
+              `Cloudinary upload failed: ${error?.message || 'No asset returned'}`,
+            );
+            reject(
+              new ServiceUnavailableException(
+                'Image storage is temporarily unavailable',
+              ),
+            );
             return;
           }
           resolve({
@@ -54,22 +74,36 @@ export class CloudinaryService {
           });
         },
       );
-      Readable.from([buffer]).pipe(uploadStream).on('error', (error) => {
-        this.logger.error(`Cloudinary upload stream failed: ${error.message}`);
-        reject(new ServiceUnavailableException('Image storage is temporarily unavailable'));
-      });
+      Readable.from([buffer])
+        .pipe(uploadStream)
+        .on('error', (error) => {
+          this.logger.error(
+            `Cloudinary upload stream failed: ${error.message}`,
+          );
+          reject(
+            new ServiceUnavailableException(
+              'Image storage is temporarily unavailable',
+            ),
+          );
+        });
     });
   }
 
   async delete(publicId: string): Promise<boolean> {
-    if (!this.isConfigured) throw new ServiceUnavailableException('Cloudinary is not configured');
+    if (!this.isConfigured)
+      throw new ServiceUnavailableException('Cloudinary is not configured');
     if (!this.isManagedAsset(publicId)) return false;
-    const result = await cloudinary.uploader.destroy(publicId, { resource_type: 'image', invalidate: true });
+    const result = await cloudinary.uploader.destroy(publicId, {
+      resource_type: 'image',
+      invalidate: true,
+    });
     return result.result === 'ok';
   }
 
   isManagedAsset(publicId: string): boolean {
     const expectedPrefix = `${this.folder}/`;
-    return publicId.startsWith(expectedPrefix) && /^[A-Za-z0-9_/-]+$/.test(publicId);
+    return (
+      publicId.startsWith(expectedPrefix) && /^[A-Za-z0-9_/-]+$/.test(publicId)
+    );
   }
 }

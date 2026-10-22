@@ -84,19 +84,34 @@ export class AuthController {
 
   private readCookie(req: any, name: string): string | undefined {
     const header = String(req?.headers?.cookie || '');
-    const value = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+    const value = header
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${name}=`));
     if (!value) return undefined;
-    try { return decodeURIComponent(value.slice(name.length + 1)); } catch { return undefined; }
+    try {
+      return decodeURIComponent(value.slice(name.length + 1));
+    } catch {
+      return undefined;
+    }
   }
 
   private assertTrustedOrigin(req: any) {
     const origin = req?.headers?.origin;
-    const configuredOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173')
+    const configuredOrigins = (
+      process.env.CORS_ORIGINS ||
+      process.env.FRONTEND_URL ||
+      'http://localhost:5173'
+    )
       .split(',')
       .map((value) => value.trim())
       .filter(Boolean)
       .map((value) => {
-        try { return new URL(value).origin; } catch { return value; }
+        try {
+          return new URL(value).origin;
+        } catch {
+          return value;
+        }
       });
     if (!origin || !configuredOrigins.includes(origin)) {
       throw new UnauthorizedException('Untrusted request origin');
@@ -107,14 +122,19 @@ export class AuthController {
     return `supa_refresh_${accountType}`;
   }
 
-  private authResponse(res: Response, result: any, accountType = AuthAccountType.CUSTOMER) {
+  private authResponse(
+    res: Response,
+    result: any,
+    accountType = AuthAccountType.CUSTOMER,
+  ) {
     if (result?.refreshToken) {
       res.cookie(this.refreshCookieName(accountType), result.refreshToken, {
         ...refreshCookieOptions(),
         maxAge: refreshCookieMaxAge(),
       });
     }
-    const { refreshToken: _refreshToken, ...body } = result || {};
+    const body = { ...(result || {}) };
+    delete body.refreshToken;
     return body;
   }
 
@@ -138,14 +158,27 @@ export class AuthController {
 
   @Post('verifyOtp')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  async verifyOtp(@Body() verifydto: emailverificationDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.verifyOtp(verifydto, AuthAccountType.CUSTOMER));
+  async verifyOtp(
+    @Body() verifydto: emailverificationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authResponse(
+      res,
+      await this.authService.verifyOtp(verifydto, AuthAccountType.CUSTOMER),
+    );
   }
 
   @Post('owner/verify-otp')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  async verifyOwnerOtp(@Body() dto: emailverificationDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.verifyOtp(dto, AuthAccountType.OWNER), AuthAccountType.OWNER);
+  async verifyOwnerOtp(
+    @Body() dto: emailverificationDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authResponse(
+      res,
+      await this.authService.verifyOtp(dto, AuthAccountType.OWNER),
+      AuthAccountType.OWNER,
+    );
   }
 
   @Post('resend-otp')
@@ -162,26 +195,52 @@ export class AuthController {
 
   @Post('login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async Login(@Body() Logindto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.signin(Logindto, AuthAccountType.CUSTOMER));
+  async Login(
+    @Body() Logindto: loginAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authResponse(
+      res,
+      await this.authService.signin(Logindto, AuthAccountType.CUSTOMER),
+    );
   }
 
   @Post('customer/login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async customerLogin(@Body() dto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.signin(dto, AuthAccountType.CUSTOMER));
+  async customerLogin(
+    @Body() dto: loginAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authResponse(
+      res,
+      await this.authService.signin(dto, AuthAccountType.CUSTOMER),
+    );
   }
 
   @Post('owner/login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async ownerLogin(@Body() dto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.signin(dto, AuthAccountType.OWNER), AuthAccountType.OWNER);
+  async ownerLogin(
+    @Body() dto: loginAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authResponse(
+      res,
+      await this.authService.signin(dto, AuthAccountType.OWNER),
+      AuthAccountType.OWNER,
+    );
   }
 
   @Post('admin/login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async adminLogin(@Body() dto: loginAuthDto, @Res({ passthrough: true }) res: Response) {
-    return this.authResponse(res, await this.authService.signin(dto, AuthAccountType.ADMIN), AuthAccountType.ADMIN);
+  async adminLogin(
+    @Body() dto: loginAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authResponse(
+      res,
+      await this.authService.signin(dto, AuthAccountType.ADMIN),
+      AuthAccountType.ADMIN,
+    );
   }
 
   @Post('forgot')
@@ -204,25 +263,52 @@ export class AuthController {
 
   @Post('reset')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async resetpassword(@Body() resetdto: resetAuthDto, @Res({ passthrough: true }) res: Response) {
-    const result = await this.authService.resetpassword(resetdto, AuthAccountType.CUSTOMER);
-    res.clearCookie(this.refreshCookieName(AuthAccountType.CUSTOMER), refreshCookieOptions());
+  async resetpassword(
+    @Body() resetdto: resetAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.resetpassword(
+      resetdto,
+      AuthAccountType.CUSTOMER,
+    );
+    res.clearCookie(
+      this.refreshCookieName(AuthAccountType.CUSTOMER),
+      refreshCookieOptions(),
+    );
     return result;
   }
 
   @Post('owner/reset')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async resetOwnerPassword(@Body() dto: resetAuthDto, @Res({ passthrough: true }) res: Response) {
-    const result = await this.authService.resetpassword(dto, AuthAccountType.OWNER);
-    res.clearCookie(this.refreshCookieName(AuthAccountType.OWNER), refreshCookieOptions());
+  async resetOwnerPassword(
+    @Body() dto: resetAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.resetpassword(
+      dto,
+      AuthAccountType.OWNER,
+    );
+    res.clearCookie(
+      this.refreshCookieName(AuthAccountType.OWNER),
+      refreshCookieOptions(),
+    );
     return result;
   }
 
   @Post('admin/reset')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  async resetAdminPassword(@Body() dto: resetAuthDto, @Res({ passthrough: true }) res: Response) {
-    const result = await this.authService.resetpassword(dto, AuthAccountType.ADMIN);
-    res.clearCookie(this.refreshCookieName(AuthAccountType.ADMIN), refreshCookieOptions());
+  async resetAdminPassword(
+    @Body() dto: resetAuthDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.resetpassword(
+      dto,
+      AuthAccountType.ADMIN,
+    );
+    res.clearCookie(
+      this.refreshCookieName(AuthAccountType.ADMIN),
+      refreshCookieOptions(),
+    );
     return result;
   }
 
@@ -230,9 +316,19 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   logout(
     @Res({ passthrough: true }) res: Response,
-    @CurrentUser() user: { id: string; email: string; role: string; sessionId: string; accountType: AuthAccountType },
+    @CurrentUser()
+    user: {
+      id: string;
+      email: string;
+      role: string;
+      sessionId: string;
+      accountType: AuthAccountType;
+    },
   ) {
-    res.clearCookie(this.refreshCookieName(user.accountType), refreshCookieOptions());
+    res.clearCookie(
+      this.refreshCookieName(user.accountType),
+      refreshCookieOptions(),
+    );
     return this.authService.Logout({}, user);
   }
 
@@ -254,13 +350,22 @@ export class AuthController {
     return this.refreshRealm(req, res, AuthAccountType.ADMIN);
   }
 
-  private async refreshRealm(req: any, res: Response, accountType: AuthAccountType) {
+  private async refreshRealm(
+    req: any,
+    res: Response,
+    accountType: AuthAccountType,
+  ) {
     this.assertTrustedOrigin(req);
     const cookieName = this.refreshCookieName(accountType);
     const refreshToken = this.readCookie(req, cookieName);
-    if (!refreshToken) throw new UnauthorizedException('Refresh session is missing');
+    if (!refreshToken)
+      throw new UnauthorizedException('Refresh session is missing');
     try {
-      return this.authResponse(res, await this.authService.refreshAccessToken(refreshToken, accountType), accountType);
+      return this.authResponse(
+        res,
+        await this.authService.refreshAccessToken(refreshToken, accountType),
+        accountType,
+      );
     } catch (error) {
       res.clearCookie(cookieName, refreshCookieOptions());
       throw error;
@@ -272,13 +377,18 @@ export class AuthController {
   // ──────────────────────────────────────────
   @Post('oauth/exchange')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  async exchangeCode(@Body() body: { code: string }, @Res({ passthrough: true }) res: Response) {
+  async exchangeCode(
+    @Body() body: { code: string },
+    @Res({ passthrough: true }) res: Response,
+  ) {
     if (!body?.code) throw new BadRequestException('code is required');
     const codeHash = createHash('sha256').update(body.code).digest('hex');
-    const entry = await this.oauthCodeModel.findOneAndDelete({
-      codeHash,
-      expiresAt: { $gt: new Date() },
-    }).exec();
+    const entry = await this.oauthCodeModel
+      .findOneAndDelete({
+        codeHash,
+        expiresAt: { $gt: new Date() },
+      })
+      .exec();
     if (!entry) {
       throw new UnauthorizedException('Invalid or expired OAuth code');
     }
@@ -293,7 +403,9 @@ export class AuthController {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const errorPage = req.query?.role === 'owner' ? '/owner-login' : '/login';
     if (!this.googleConfigured) {
-      this.logger.warn('Google OAuth requested but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set in .env');
+      this.logger.warn(
+        'Google OAuth requested but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set in .env',
+      );
       return res.redirect(
         `${frontendUrl}${errorPage}?error=${encodeURIComponent('Google Sign In is not configured on the server. Please check backend .env configuration.')}`,
       );
@@ -330,7 +442,9 @@ export class AuthController {
     // The state MUST round-trip: absent, unknown, reused, or expired state
     // means the callback was forged or replayed — reject before trusting it.
     if (!state || !(await this.oauthState.consume(state))) {
-      this.logger.warn('Google OAuth callback rejected: invalid or missing state');
+      this.logger.warn(
+        'Google OAuth callback rejected: invalid or missing state',
+      );
       return res.redirect(
         `${frontendUrl}/login?error=${encodeURIComponent('Invalid or expired OAuth state. Please try signing in again.')}`,
       );
@@ -378,8 +492,12 @@ export class AuthController {
       // State is mandatory: Apple always echoes it back. Anything missing,
       // unknown, reused, or expired is a forged/replayed callback.
       if (!body.state || !(await this.oauthState.consume(body.state))) {
-        this.logger.warn('Apple OAuth callback rejected: invalid or missing state');
-        throw new Error('Invalid or expired OAuth state. Please try signing in again.');
+        this.logger.warn(
+          'Apple OAuth callback rejected: invalid or missing state',
+        );
+        throw new Error(
+          'Invalid or expired OAuth state. Please try signing in again.',
+        );
       }
       const result = await this.appleAuthService.handleCallback(body);
       return this.redirectOAuthResult(res, result);
@@ -393,12 +511,19 @@ export class AuthController {
 
   private async redirectOAuthResult(
     res: Response,
-    result?: { accessToken?: string; refreshToken?: string; user?: unknown; authError?: string },
+    result?: {
+      accessToken?: string;
+      refreshToken?: string;
+      user?: unknown;
+      authError?: string;
+    },
   ) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     try {
       if (result?.authError) {
-        return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(result.authError)}`);
+        return res.redirect(
+          `${frontendUrl}/login?error=${encodeURIComponent(result.authError)}`,
+        );
       }
       if (!result?.accessToken || !result?.user) {
         return res.redirect(`${frontendUrl}/login?error=OAuth+failed`);
@@ -415,7 +540,9 @@ export class AuthController {
         },
         expiresAt: new Date(Date.now() + OAUTH_CODE_TTL_MS),
       });
-      return res.redirect(`${frontendUrl}/auth/callback?code=${encodeURIComponent(code)}`);
+      return res.redirect(
+        `${frontendUrl}/auth/callback?code=${encodeURIComponent(code)}`,
+      );
     } catch {
       return res.redirect(`${frontendUrl}/login?error=OAuth+failed`);
     }

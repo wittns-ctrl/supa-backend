@@ -1,12 +1,16 @@
 import { Prop, SchemaFactory, Schema } from '@nestjs/mongoose';
 import { Document, Schema as MongooseSchema, Types } from 'mongoose';
-import { User } from 'src/users/schema/user.schema';
 
 export type notificationDocument = notification & Document;
 
 @Schema({ timestamps: true })
 export class notification {
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true, index: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true,
+  })
   userId!: Types.ObjectId;
   @Prop({ required: true })
   title!: string;

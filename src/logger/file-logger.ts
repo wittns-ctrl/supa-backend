@@ -39,29 +39,45 @@ export class FileLogger extends ConsoleLogger {
     });
   }
 
-  private static writeToFile(level: string, context: string | undefined, message: string) {
+  private static writeToFile(
+    level: string,
+    context: string | undefined,
+    message: string,
+  ) {
     if (!FileLogger.dirReady) return;
     try {
       const now = new Date();
       const day = now.toISOString().slice(0, 10);
       if (day !== FileLogger.fileDate || FileLogger.fd === null) {
         if (FileLogger.fd !== null) closeSync(FileLogger.fd);
-        FileLogger.fd = openSync(join(FileLogger.logDir, `app-${day}.log`), 'a');
+        FileLogger.fd = openSync(
+          join(FileLogger.logDir, `app-${day}.log`),
+          'a',
+        );
         FileLogger.fileDate = day;
       }
       const ctx = context ? ` [${context}]` : '';
-      writeSync(FileLogger.fd, `${now.toISOString()} ${level}${ctx} ${message}\n`);
+      writeSync(
+        FileLogger.fd,
+        `${now.toISOString()} ${level}${ctx} ${message}\n`,
+      );
     } catch {
       // never let logging take the app down
     }
   }
 
   private static serialize(messages: unknown[]): string {
-    return messages.map((m) => (typeof m === 'string' ? m : format(m))).join(' ');
+    return messages
+      .map((m) => (typeof m === 'string' ? m : format(m)))
+      .join(' ');
   }
 
   private writeAll(level: string, messages: unknown[], context?: string) {
-    FileLogger.writeToFile(level, context ?? this.context, FileLogger.serialize(messages));
+    FileLogger.writeToFile(
+      level,
+      context ?? this.context,
+      FileLogger.serialize(messages),
+    );
   }
 
   log(message: any, context?: string) {
@@ -77,7 +93,8 @@ export class FileLogger extends ConsoleLogger {
   error(message: any, stackOrContext?: string, context?: string) {
     super.error(message, stackOrContext, context);
     const parts: unknown[] = [message];
-    if (stackOrContext && stackOrContext.includes('\n')) parts.push(stackOrContext);
+    if (stackOrContext && stackOrContext.includes('\n'))
+      parts.push(stackOrContext);
     this.writeAll('ERROR', parts, context);
   }
 

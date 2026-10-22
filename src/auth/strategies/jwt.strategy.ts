@@ -25,22 +25,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; email: string; role: string; sid: string; accountType: string }) {
+  async validate(payload: {
+    sub: string;
+    email: string;
+    role: string;
+    sid: string;
+    accountType: string;
+  }) {
     const user = await this.userModel
       .findById(payload.sub)
-      .select('+isPrimaryAdmin -password -refreshToken -authSessions.refreshTokenHash -authSessions.previousRefreshTokenHash');
+      .select(
+        '+isPrimaryAdmin -password -refreshToken -authSessions.refreshTokenHash -authSessions.previousRefreshTokenHash',
+      );
     if (!user) throw new UnauthorizedException('User not found');
     if (!payload.accountType || user.accountType !== payload.accountType) {
       throw new UnauthorizedException('Authentication realm mismatch');
     }
-    if (
-      user.accountType === 'admin' &&
-      user.isPrimaryAdmin !== true
-    ) {
-      throw new UnauthorizedException('Admin access is not enabled for this account');
+    if (user.accountType === 'admin' && user.isPrimaryAdmin !== true) {
+      throw new UnauthorizedException(
+        'Admin access is not enabled for this account',
+      );
     }
     if (user.status === UserStatus.BLOCKED) {
-      throw new UnauthorizedException('ACCOUNT_BLOCKED: Your account has been blocked by an administrator.');
+      throw new UnauthorizedException(
+        'ACCOUNT_BLOCKED: Your account has been blocked by an administrator.',
+      );
     }
     const session: any = user.authSessions?.find(
       (entry: any) => entry.sessionId === payload.sid,
@@ -56,23 +65,32 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         // Pending or rejected owners can access their private restaurant
         // portal to review/update their application. Public endpoints enforce
         // approval separately before publishing anything.
-        if (membership.status === 'active' || membership.status === 'pending' || membership.status === 'rejected') {
+        if (
+          membership.status === 'active' ||
+          membership.status === 'pending' ||
+          membership.status === 'rejected'
+        ) {
           roles.add(membership.role);
         }
       }
     }
-    const effectiveRole = roles.has(user.role) ? user.role : [...roles][0] || '';
+    const effectiveRole = roles.has(user.role)
+      ? user.role
+      : [...roles][0] || '';
     return {
       id: user._id.toString(),
       email: user.email,
       role: effectiveRole,
       accountType: user.accountType,
       roles: [...roles],
-      restaurantMemberships: (user.restaurantMemberships || []).map((membership: any) => ({
-        restaurantId: membership.restaurantId?.toString?.() || membership.restaurantId,
-        role: membership.role,
-        status: membership.status,
-      })),
+      restaurantMemberships: (user.restaurantMemberships || []).map(
+        (membership: any) => ({
+          restaurantId:
+            membership.restaurantId?.toString?.() || membership.restaurantId,
+          role: membership.role,
+          status: membership.status,
+        }),
+      ),
       name: user.name,
       sessionId: payload.sid,
     };

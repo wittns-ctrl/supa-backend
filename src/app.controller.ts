@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Header } from '@nestjs/common';
 import { AppService } from './app.service';
 
 @Controller()
@@ -11,11 +11,13 @@ export class AppController {
   }
 
   @Get('health/live')
+  @Header('Cache-Control', 'no-store')
   getLiveness() {
     return this.appService.getLiveness();
   }
 
   @Get('health/ready')
+  @Header('Cache-Control', 'no-store')
   getReadiness() {
     return this.appService.getReadiness();
   }
