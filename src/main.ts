@@ -23,9 +23,12 @@ function parseCorsOrigins(): (string | RegExp)[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-    .map((s) =>
-      s.startsWith('/') && s.endsWith('/') ? new RegExp(s.slice(1, -1)) : s,
-    );
+    .map((s) => {
+      if (s.startsWith('/') && s.endsWith('/')) {
+        return new RegExp(s.slice(1, -1));
+      }
+      return s.replace(/\/+$/, '');
+    });
 
   if (isProd && isDefault) {
     const logger = new Logger('CORS');
