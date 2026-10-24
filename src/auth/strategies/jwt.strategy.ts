@@ -35,7 +35,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.userModel
       .findById(payload.sub)
       .select(
-        '+isPrimaryAdmin -password -refreshToken -authSessions.refreshTokenHash -authSessions.previousRefreshTokenHash',
+        '_id email name role accountType status restaurantMemberships authSessions.sessionId authSessions.expiresAt +isPrimaryAdmin',
       );
     if (!user) throw new UnauthorizedException('User not found');
     if (!payload.accountType || user.accountType !== payload.accountType) {

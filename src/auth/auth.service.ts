@@ -93,16 +93,27 @@ export class AuthService {
     return email ? email.trim().toLowerCase() : '';
   }
 
-  private findUserByEmail(
+  private async findUserByEmail(
     email: string,
     accountType: AuthAccountType = AuthAccountType.CUSTOMER,
     primaryAdminOnly = false,
   ) {
     const normalized = this.normalizeEmail(email);
     if (!normalized) return null;
-    return this.userModel.findOne({
+    const accountFilter = {
       accountType,
       ...(primaryAdminOnly ? { isPrimaryAdmin: true } : {}),
+    };
+
+    // New and normalized accounts use the compound { email, accountType }
+    // index. Keep a case-insensitive fallback for legacy mixed-case records.
+    const exactMatch = await this.userModel
+      .findOne({ ...accountFilter, email: normalized })
+      .exec();
+    if (exactMatch) return exactMatch;
+
+    return this.userModel.findOne({
+      ...accountFilter,
       email: {
         $regex: new RegExp(
           `^${normalized.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`,

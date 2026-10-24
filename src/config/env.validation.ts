@@ -89,6 +89,10 @@ export class EnvVars {
   FRONTEND_URL?: string;
 
   @IsOptional()
+  @IsIn(['auto', 'smtp', 'resend'])
+  MAIL_PROVIDER?: string = 'auto';
+
+  @IsOptional()
   @IsString()
   CORS_ORIGINS?: string;
 

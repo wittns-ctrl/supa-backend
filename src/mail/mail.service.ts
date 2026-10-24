@@ -60,6 +60,8 @@ export class MailService implements OnModuleInit {
   private readonly logger = new Logger(MailService.name);
   private smtpReady = false;
   private resendApiKey: string | null = null;
+  private readonly provider =
+    process.env.MAIL_PROVIDER?.trim().toLowerCase() || 'auto';
 
   constructor(
     @Optional()
@@ -77,6 +79,8 @@ export class MailService implements OnModuleInit {
   }
 
   private initTransporter() {
+    if (this.provider === 'resend') return;
+
     const user = process.env.SMTP_USER?.trim();
     const pass = process.env.SMTP_PASS?.trim();
     const host = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
@@ -122,6 +126,17 @@ export class MailService implements OnModuleInit {
   }
 
   async onModuleInit() {
+    if (this.provider === 'resend') {
+      if (!this.resendApiKey) {
+        this.logger.warn(
+          'MAIL_PROVIDER=resend but RESEND_API_KEY is not configured.',
+        );
+      } else {
+        this.logger.log('Resend selected as the email provider.');
+      }
+      return;
+    }
+
     // SMTP is the primary channel; Resend is only a fallback. Without a
     // verified domain Resend can deliver to the account owner's address
     // alone (HTTP 403 for everyone else), so it cannot be trusted first.
@@ -163,6 +178,10 @@ export class MailService implements OnModuleInit {
     html: string,
     text: string,
   ): Promise<boolean> {
+    if (this.provider === 'resend') {
+      return this.sendViaResend(to, subject, html, text);
+    }
+
     return (
       (await this.sendViaSmtp(to, subject, html, text)) ||
       (await this.sendViaResend(to, subject, html, text))
