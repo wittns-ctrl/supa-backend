@@ -89,8 +89,12 @@ export class EnvVars {
   FRONTEND_URL?: string;
 
   @IsOptional()
-  @IsIn(['auto', 'smtp', 'resend'])
-  MAIL_PROVIDER?: string = 'auto';
+  @IsString()
+  RESEND_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  RESEND_FROM_EMAIL?: string;
 
   @IsOptional()
   @IsString()

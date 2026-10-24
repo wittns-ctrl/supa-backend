@@ -8,7 +8,6 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { randomUUID } from 'crypto';
-import * as nodemailer from 'nodemailer';
 import { CreateMailDto } from './dto/create-mail.dto';
 import { NewsletterUpdateDto } from './dto/newsletter-update.dto';
 import {
@@ -27,21 +26,8 @@ import {
 } from 'src/notifications/schema/notifications.schema';
 
 /**
- * MailService — tries SMTP first (works with any recipient); falls back to
- * Resend, then to printing on the server console.
- *
- * Gmail App Password Setup (to enable real email delivery):
- *   1. Go to https://myaccount.google.com/apppasswords
- *   2. Enable 2-Step Verification first if not done
- *   3. Create an App Password for "Mail"
- *   4. Set SMTP_PASS=<16-char-password> in .env (no spaces)
- *   5. Set SMTP_USER=your-gmail@gmail.com
- *
- * Alternative — Resend.com (recommended, free 100 emails/day):
- *   1. Sign up at https://resend.com (free, no credit card)
- *   2. Get your API key
- *   3. Set RESEND_API_KEY=re_xxxxxxxx in .env
- *   4. Set FROM_EMAIL=onboarding@resend.dev (or your verified domain)
+ * MailService sends application email through Resend's HTTPS API. Configure
+ * RESEND_API_KEY and a sender address on a domain verified in Resend.
  */
 
 /** Escapes user-provided text before interpolating into email HTML. */
@@ -56,12 +42,8 @@ function escapeHtml(input: string): string {
 
 @Injectable()
 export class MailService implements OnModuleInit {
-  private transporter: nodemailer.Transporter | null = null;
   private readonly logger = new Logger(MailService.name);
-  private smtpReady = false;
   private resendApiKey: string | null = null;
-  private readonly provider =
-    process.env.MAIL_PROVIDER?.trim().toLowerCase() || 'auto';
 
   constructor(
     @Optional()
@@ -75,100 +57,16 @@ export class MailService implements OnModuleInit {
     private readonly notificationModel?: Model<notificationDocument>,
   ) {
     this.resendApiKey = process.env.RESEND_API_KEY?.trim() || null;
-    this.initTransporter();
-  }
-
-  private initTransporter() {
-    if (this.provider === 'resend') return;
-
-    const user = process.env.SMTP_USER?.trim();
-    const pass = process.env.SMTP_PASS?.trim();
-    const host = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com';
-    const port = Number(process.env.SMTP_PORT) || 587;
-
-    if (!user || !pass) {
-      this.logger.warn(
-        '[MailService] SMTP_USER or SMTP_PASS not set. Email sending disabled.',
-      );
-      return;
-    }
-
-    // Use Gmail service shorthand if host is gmail — handles auth better
-    const isGmail =
-      host.includes('gmail.com') || host.includes('googlemail.com');
-
-    // Without these, nodemailer's defaults (60s+) let a transient SMTP hang
-    // block the whole app boot inside onModuleInit's verify().
-    const timeouts = {
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 15_000,
-    };
-
-    const config: nodemailer.TransportOptions = isGmail
-      ? ({
-          service: 'gmail',
-          auth: { user, pass },
-          ...timeouts,
-        } as any)
-      : {
-          host,
-          port,
-          secure: port === 465,
-          auth: { user, pass },
-          ...timeouts,
-          // Require valid TLS certificates — rejectUnauthorized:false enables
-          // man-in-the-middle attacks on credentials and email content.
-          tls: { rejectUnauthorized: true },
-        };
-
-    this.transporter = nodemailer.createTransport(config);
   }
 
   async onModuleInit() {
-    if (this.provider === 'resend') {
-      if (!this.resendApiKey) {
-        this.logger.warn(
-          'MAIL_PROVIDER=resend but RESEND_API_KEY is not configured.',
-        );
-      } else {
-        this.logger.log('Resend selected as the email provider.');
-      }
-      return;
-    }
-
-    // SMTP is the primary channel; Resend is only a fallback. Without a
-    // verified domain Resend can deliver to the account owner's address
-    // alone (HTTP 403 for everyone else), so it cannot be trusted first.
-    if (!this.transporter) {
+    if (!this.resendApiKey || !process.env.RESEND_FROM_EMAIL?.trim()) {
       this.logger.warn(
-        '⚠️  No SMTP provider configured. Authentication emails cannot be delivered until SMTP or Resend is configured.\n' +
-          '   → Option A (Gmail): Set SMTP_USER + SMTP_PASS (Gmail App Password) in .env\n' +
-          '   → Option B (Free): Sign up at https://resend.com and set RESEND_API_KEY in .env',
+        'RESEND_API_KEY and RESEND_FROM_EMAIL are required for transactional email delivery.',
       );
       return;
     }
-
-    try {
-      await this.transporter.verify();
-      this.smtpReady = true;
-      this.logger.log('✅ SMTP verified — emails will be sent to inbox.');
-    } catch (err) {
-      this.smtpReady = false;
-      this.logger.warn(
-        `⚠️  SMTP FAILED: ${err.message}\n` +
-          '   SMTP delivery is unavailable; Resend will be used as fallback when configured.\n' +
-          '   Fix options:\n' +
-          '   A) Gmail App Password: https://myaccount.google.com/apppasswords → update SMTP_PASS in .env\n' +
-          '   B) Free email (Resend): https://resend.com → set RESEND_API_KEY in .env (100 emails/day free)',
-      );
-    }
-
-    if (this.resendApiKey) {
-      this.logger.log(
-        '✅ Resend API key detected — will be used as fallback when SMTP is unavailable.',
-      );
-    }
+    this.logger.log('Resend email provider configured.');
   }
 
   // ── Delivery orchestrator ────────────────────────────────────────────────
@@ -178,14 +76,7 @@ export class MailService implements OnModuleInit {
     html: string,
     text: string,
   ): Promise<boolean> {
-    if (this.provider === 'resend') {
-      return this.sendViaResend(to, subject, html, text);
-    }
-
-    return (
-      (await this.sendViaSmtp(to, subject, html, text)) ||
-      (await this.sendViaResend(to, subject, html, text))
-    );
+    return this.sendViaResend(to, subject, html, text);
   }
 
   // ── Resend.com API sender ──────────────────────────────────────────────────
@@ -197,14 +88,12 @@ export class MailService implements OnModuleInit {
   ): Promise<boolean> {
     if (!this.resendApiKey) return false;
 
-    let from = process.env.FROM_EMAIL?.trim() || 'onboarding@resend.dev';
-    // Resend requires verified domain or onboarding@resend.dev
-    if (
-      from.includes('@gmail.com') ||
-      from.includes('@yahoo.com') ||
-      from.includes('@hotmail.com')
-    ) {
-      from = 'SupaMeal <onboarding@resend.dev>';
+    const from = process.env.RESEND_FROM_EMAIL?.trim() || '';
+    if (!from) {
+      this.logger.error(
+        '[Resend] RESEND_FROM_EMAIL is not configured; email was not sent.',
+      );
+      return false;
     }
 
     try {
@@ -215,6 +104,7 @@ export class MailService implements OnModuleInit {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ from, to, subject, html, text }),
+        signal: AbortSignal.timeout(8_000),
       });
 
       if (!response.ok) {
@@ -228,37 +118,6 @@ export class MailService implements OnModuleInit {
       return true;
     } catch (err) {
       this.logger.error(`[Resend] Error: ${err.message}`);
-      return false;
-    }
-  }
-
-  // ── SMTP sender ───────────────────────────────────────────────────────────
-  private async sendViaSmtp(
-    to: string,
-    subject: string,
-    html: string,
-    text: string,
-  ): Promise<boolean> {
-    if (!this.transporter || !this.smtpReady) return false;
-
-    const from =
-      process.env.FROM_EMAIL?.trim() ||
-      process.env.SMTP_USER?.trim() ||
-      'no-reply@supameal.com';
-
-    try {
-      const info = await this.transporter.sendMail({
-        from,
-        to,
-        subject,
-        html,
-        text,
-      });
-      this.logger.log(`[SMTP] Email sent to ${to} — ID: ${info.messageId}`);
-      return true;
-    } catch (err) {
-      this.smtpReady = false;
-      this.logger.error(`[SMTP] Failed for ${to}: ${err.message}`);
       return false;
     }
   }
@@ -459,9 +318,7 @@ export class MailService implements OnModuleInit {
   // ── Send contact form email ───────────────────────────────────────────
   async sendContactEmail(dto: CreateMailDto) {
     const supportEmail =
-      process.env.SUPPORT_EMAIL?.trim() ||
-      process.env.SMTP_USER?.trim() ||
-      'mugishawitness15@gmail.com';
+      process.env.SUPPORT_EMAIL?.trim() || 'support@supameal.com';
 
     const subject = `SupaMeal Contact: ${escapeHtml(dto.fullName)}`;
     const safeName = escapeHtml(dto.fullName);
@@ -512,9 +369,7 @@ export class MailService implements OnModuleInit {
       .exec();
 
     const supportEmail =
-      process.env.SUPPORT_EMAIL?.trim() ||
-      process.env.SMTP_USER?.trim() ||
-      'mugishawitness15@gmail.com';
+      process.env.SUPPORT_EMAIL?.trim() || 'support@supameal.com';
     const safeSupportEmail = escapeHtml(supportEmail);
     const unsubscribeUrl = `${(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/newsletter/unsubscribe/${encodeURIComponent(subscriber.unsubscribeToken)}`;
     const safeUnsubscribeUrl = escapeHtml(unsubscribeUrl);
@@ -614,9 +469,7 @@ export class MailService implements OnModuleInit {
     const safeSubject = escapeHtml(subjectText);
     const safeMessage = escapeHtml(messageText).replace(/\n/g, '<br />');
     const supportEmail =
-      process.env.SUPPORT_EMAIL?.trim() ||
-      process.env.SMTP_USER?.trim() ||
-      'mugishawitness15@gmail.com';
+      process.env.SUPPORT_EMAIL?.trim() || 'support@supameal.com';
     let sent = 0;
     let failed = 0;
     let total = 0;
