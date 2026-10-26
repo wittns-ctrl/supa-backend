@@ -59,14 +59,52 @@ export class MailService implements OnModuleInit {
     this.resendApiKey = process.env.RESEND_API_KEY?.trim() || null;
   }
 
+  private getSendlibertyApiKey(): string | null {
+    return process.env.SENDLIBERTY_API_KEY?.trim() || null;
+  }
+
+  private getSendlibertyFromEmail(): string | null {
+    return (
+      process.env.SENDLIBERTY_FROM_EMAIL?.trim() ||
+      process.env.FROM_EMAIL?.trim() ||
+      process.env.SMTP_USER?.trim() ||
+      null
+    );
+  }
+
+  private getResendApiKey(): string | null {
+    return process.env.RESEND_API_KEY?.trim() || this.resendApiKey || null;
+  }
+
+  private getResendFromEmail(): string | null {
+    return (
+      process.env.RESEND_FROM_EMAIL?.trim() ||
+      process.env.FROM_EMAIL?.trim() ||
+      null
+    );
+  }
+
   async onModuleInit() {
-    if (!this.resendApiKey || !process.env.RESEND_FROM_EMAIL?.trim()) {
-      this.logger.warn(
-        'RESEND_API_KEY and RESEND_FROM_EMAIL are required for transactional email delivery.',
+    const sendlibertyKey = this.getSendlibertyApiKey();
+    const sendlibertyFrom = this.getSendlibertyFromEmail();
+    const resendKey = this.getResendApiKey();
+    const resendFrom = this.getResendFromEmail();
+
+    if (sendlibertyKey) {
+      this.logger.log(
+        `Sendliberty email provider configured (sender: ${sendlibertyFrom || 'default connected Gmail account'}).`,
       );
       return;
     }
-    this.logger.log('Resend email provider configured.');
+
+    if (resendKey && resendFrom) {
+      this.logger.log(`Resend email provider configured with sender: ${resendFrom}`);
+      return;
+    }
+
+    this.logger.warn(
+      'No email provider configured. Please set SENDLIBERTY_API_KEY (and optionally SENDLIBERTY_FROM_EMAIL) in .env or Render dashboard.',
+    );
   }
 
   // ── Delivery orchestrator ────────────────────────────────────────────────
@@ -76,7 +114,82 @@ export class MailService implements OnModuleInit {
     html: string,
     text: string,
   ): Promise<boolean> {
-    return this.sendViaResend(to, subject, html, text);
+    if (this.getSendlibertyApiKey()) {
+      const sent = await this.sendViaSendliberty(to, subject, html, text);
+      if (sent) return true;
+      if (this.getResendApiKey()) {
+        this.logger.warn(
+          '[MailService] Sendliberty attempt failed. Attempting fallback via Resend...',
+        );
+        return this.sendViaResend(to, subject, html, text);
+      }
+      return false;
+    }
+
+    if (this.getResendApiKey()) {
+      return this.sendViaResend(to, subject, html, text);
+    }
+
+    this.logger.error(
+      '[MailService] Neither SENDLIBERTY_API_KEY nor RESEND_API_KEY is configured.',
+    );
+    return false;
+  }
+
+  // ── Sendliberty.com API sender ───────────────────────────────────────────
+  private async sendViaSendliberty(
+    to: string,
+    subject: string,
+    html: string,
+    text: string,
+  ): Promise<boolean> {
+    const apiKey = this.getSendlibertyApiKey();
+    if (!apiKey) {
+      this.logger.error(
+        '[Sendliberty] SENDLIBERTY_API_KEY is not configured; email was not sent.',
+      );
+      return false;
+    }
+
+    const from = this.getSendlibertyFromEmail();
+    const payload: Record<string, any> = {
+      to,
+      subject,
+      html,
+      text,
+    };
+    if (from) {
+      payload.from = from;
+    }
+
+    try {
+      const response = await fetch('https://sendliberty.com/api/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(12_000),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        this.logger.error(
+          `[Sendliberty] Delivery failed (HTTP ${response.status}): ${JSON.stringify(body)}`,
+        );
+        return false;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      this.logger.log(
+        `[Sendliberty] Email sent to ${to}${data?.id ? ` — ID: ${data.id}` : ''}`,
+      );
+      return true;
+    } catch (err: any) {
+      this.logger.error(`[Sendliberty] Error: ${err?.message || err}`);
+      return false;
+    }
   }
 
   // ── Resend.com API sender ──────────────────────────────────────────────────
@@ -86,12 +199,18 @@ export class MailService implements OnModuleInit {
     html: string,
     text: string,
   ): Promise<boolean> {
-    if (!this.resendApiKey) return false;
+    const apiKey = this.getResendApiKey();
+    if (!apiKey) {
+      this.logger.error(
+        '[Resend] RESEND_API_KEY is not configured; email was not sent.',
+      );
+      return false;
+    }
 
-    const from = process.env.RESEND_FROM_EMAIL?.trim() || '';
+    const from = this.getResendFromEmail();
     if (!from) {
       this.logger.error(
-        '[Resend] RESEND_FROM_EMAIL is not configured; email was not sent.',
+        '[Resend] Neither RESEND_FROM_EMAIL nor FROM_EMAIL is configured; email was not sent.',
       );
       return false;
     }
@@ -100,24 +219,26 @@ export class MailService implements OnModuleInit {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${this.resendApiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ from, to, subject, html, text }),
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(10_000),
       });
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        this.logger.error(`[Resend] Failed: ${JSON.stringify(body)}`);
+        this.logger.error(
+          `[Resend] Delivery failed (HTTP ${response.status}): ${JSON.stringify(body)}`,
+        );
         return false;
       }
 
       const data = await response.json();
       this.logger.log(`[Resend] Email sent to ${to} — ID: ${data.id}`);
       return true;
-    } catch (err) {
-      this.logger.error(`[Resend] Error: ${err.message}`);
+    } catch (err: any) {
+      this.logger.error(`[Resend] Error: ${err?.message || err}`);
       return false;
     }
   }

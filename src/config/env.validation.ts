@@ -90,11 +90,23 @@ export class EnvVars {
 
   @IsOptional()
   @IsString()
+  SENDLIBERTY_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  SENDLIBERTY_FROM_EMAIL?: string;
+
+  @IsOptional()
+  @IsString()
   RESEND_API_KEY?: string;
 
   @IsOptional()
   @IsString()
   RESEND_FROM_EMAIL?: string;
+
+  @IsOptional()
+  @IsString()
+  FROM_EMAIL?: string;
 
   @IsOptional()
   @IsString()
