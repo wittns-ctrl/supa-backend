@@ -554,7 +554,9 @@ export class AuthService {
 
       await user.save();
 
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:5173')
+        .trim()
+        .replace(/\/+$/, '');
       const link = `${frontendUrl}/reset-password?token=${resettoken}&accountType=${accountType}`;
       try {
         await this.mailservice.sendResetEmail(forgotDto.email, link);

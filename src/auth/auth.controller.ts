@@ -41,6 +41,12 @@ import { CreateOwnerAuthDto } from './dto/owner-signup-auth.dto';
 const OAUTH_CODE_TTL_MS = 60_000;
 const REFRESH_COOKIE_DEFAULT_MS = 7 * 24 * 60 * 60 * 1000;
 
+function frontendUrl(): string {
+  return (process.env.FRONTEND_URL || 'http://localhost:5173')
+    .trim()
+    .replace(/\/+$/, '');
+}
+
 function refreshCookieMaxAge(): number {
   const value = process.env.JWT_REFRESH_TTL || '7d';
   const match = /^(\d+)(ms|s|m|h|d)$/.exec(value);
@@ -110,7 +116,7 @@ export class AuthController {
         try {
           return new URL(value).origin;
         } catch {
-          return value;
+          return value.replace(/\/+$/, '');
         }
       });
     if (!origin || !configuredOrigins.includes(origin)) {
@@ -400,14 +406,14 @@ export class AuthController {
   // ──────────────────────────────────────────
   @Get('google')
   async googleAuth(@Req() req: any, @Res() res: Response) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const redirectBase = frontendUrl();
     const errorPage = req.query?.role === 'owner' ? '/owner-login' : '/login';
     if (!this.googleConfigured) {
       this.logger.warn(
         'Google OAuth requested but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set in .env',
       );
       return res.redirect(
-        `${frontendUrl}${errorPage}?error=${encodeURIComponent('Google Sign In is not configured on the server. Please check backend .env configuration.')}`,
+        `${redirectBase}${errorPage}?error=${encodeURIComponent('Google Sign In is not configured on the server. Please check backend environment configuration.')}`,
       );
     }
     // CSRF protection: a fresh one-time state is minted per request and sent
@@ -423,7 +429,7 @@ export class AuthController {
       // Only invoked on failure — on success passport has already redirected
       this.logger.warn('Google OAuth start failed', err);
       return res.redirect(
-        `${frontendUrl}${errorPage}?error=${encodeURIComponent('Could not start Google Sign In. Please try again.')}`,
+        `${redirectBase}${errorPage}?error=${encodeURIComponent('Could not start Google Sign In. Please try again.')}`,
       );
     });
   }
@@ -432,13 +438,12 @@ export class AuthController {
   // Note: this @nestjs/passport version types AuthGuard with a single arg.
   // No express-session is installed, so passport's session mode is inert
   // anyway — the CSRF guarantee comes from the one-time state check below.
-  @UseGuards(AuthGuard('google'))
   async googleCallback(
     @Req() req: any,
     @Res() res: Response,
     @Query('state') state?: string,
   ) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const redirectBase = frontendUrl();
     // The state MUST round-trip: absent, unknown, reused, or expired state
     // means the callback was forged or replayed — reject before trusting it.
     if (!state || !(await this.oauthState.consume(state))) {
@@ -446,10 +451,18 @@ export class AuthController {
         'Google OAuth callback rejected: invalid or missing state',
       );
       return res.redirect(
-        `${frontendUrl}/login?error=${encodeURIComponent('Invalid or expired OAuth state. Please try signing in again.')}`,
+        `${redirectBase}/login?error=${encodeURIComponent('Invalid or expired OAuth state. Please try signing in again.')}`,
       );
     }
-    return this.redirectOAuthResult(res, req.user);
+    // Validate and consume state before Passport exchanges Google's code. This
+    // prevents a forged callback from creating a login session in the browser.
+    return passport.authenticate('google', { session: false }, (err: any, user: any) => {
+      if (err || !user) {
+        this.logger.warn('Google OAuth callback failed', err);
+        return res.redirect(`${redirectBase}/login?error=OAuth+failed`);
+      }
+      return this.redirectOAuthResult(res, user);
+    })(req, res);
   }
 
   // ──────────────────────────────────────────
@@ -457,11 +470,11 @@ export class AuthController {
   // ──────────────────────────────────────────
   @Get('apple')
   async appleAuth(@Req() req: any, @Res() res: Response) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const redirectBase = frontendUrl();
     try {
       if (!this.appleAuthService.isConfigured()) {
         return res.redirect(
-          `${frontendUrl}/login?error=${encodeURIComponent('Apple Sign In is not configured on the server')}`,
+          `${redirectBase}/login?error=${encodeURIComponent('Apple Sign In is not configured on the server')}`,
         );
       }
       // CSRF protection: per-request one-time state — Apple returns it in the
@@ -470,7 +483,7 @@ export class AuthController {
       return res.redirect(this.appleAuthService.getAuthorizationUrl(state));
     } catch (err: any) {
       return res.redirect(
-        `${frontendUrl}/login?error=${encodeURIComponent(err?.message || 'Apple Sign In failed')}`,
+        `${redirectBase}/login?error=${encodeURIComponent(err?.message || 'Apple Sign In failed')}`,
       );
     }
   }
@@ -502,9 +515,9 @@ export class AuthController {
       const result = await this.appleAuthService.handleCallback(body);
       return this.redirectOAuthResult(res, result);
     } catch (err: any) {
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const redirectBase = frontendUrl();
       return res.redirect(
-        `${frontendUrl}/login?error=${encodeURIComponent(err?.message || 'Apple Sign In failed')}`,
+        `${redirectBase}/login?error=${encodeURIComponent(err?.message || 'Apple Sign In failed')}`,
       );
     }
   }
@@ -518,15 +531,15 @@ export class AuthController {
       authError?: string;
     },
   ) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const redirectBase = frontendUrl();
     try {
       if (result?.authError) {
         return res.redirect(
-          `${frontendUrl}/login?error=${encodeURIComponent(result.authError)}`,
+          `${redirectBase}/login?error=${encodeURIComponent(result.authError)}`,
         );
       }
       if (!result?.accessToken || !result?.user) {
-        return res.redirect(`${frontendUrl}/login?error=OAuth+failed`);
+        return res.redirect(`${redirectBase}/login?error=OAuth+failed`);
       }
       // One-time code instead of tokens in the URL — tokens no longer land in
       // browser history, logs, or Referer headers.
@@ -541,10 +554,10 @@ export class AuthController {
         expiresAt: new Date(Date.now() + OAUTH_CODE_TTL_MS),
       });
       return res.redirect(
-        `${frontendUrl}/auth/callback?code=${encodeURIComponent(code)}`,
+        `${redirectBase}/auth/callback?code=${encodeURIComponent(code)}`,
       );
     } catch {
-      return res.redirect(`${frontendUrl}/login?error=OAuth+failed`);
+      return res.redirect(`${redirectBase}/login?error=OAuth+failed`);
     }
   }
 }
