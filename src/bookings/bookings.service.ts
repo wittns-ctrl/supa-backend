@@ -48,8 +48,43 @@ export class BookingsService {
     }
   }
 
+  // Booking dates arrive as ISO strings (usually date-only, i.e. UTC midnight),
+  // so every day boundary is computed in UTC. Local-time getters shifted the
+  // day on any server not running in UTC and mis-rejected same-day bookings.
+  private startOfUtcDay(date: Date) {
+    return new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
+  }
+
+  private dayRange(date: Date) {
+    const start = this.startOfUtcDay(date);
+    return { $gte: start, $lt: new Date(start.getTime() + 86_400_000) };
+  }
+
   private dayKey(restaurantId: string, date: Date) {
-    return `${restaurantId}:${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    return `${restaurantId}:${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
+  }
+
+  private assertBookableDate(date: Date) {
+    if (date < this.startOfUtcDay(new Date())) {
+      throw new BadRequestException('Booking date cannot be in the past');
+    }
+    const maxDate = new Date();
+    maxDate.setUTCDate(maxDate.getUTCDate() + 90);
+    if (date > maxDate) {
+      throw new BadRequestException(
+        'Bookings can only be made up to 90 days in advance',
+      );
+    }
+  }
+
+  // One locking strategy for every capacity-sensitive write: a shared Redis
+  // lock across API replicas, falling back to the in-process mutex locally.
+  private runLocked<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    return this.redis.isConfigured
+      ? this.redis.withLock(`booking:${key}`, fn)
+      : this.withDayLock(key, fn);
   }
 
   private async sumActiveSeats(
@@ -98,20 +133,8 @@ export class BookingsService {
     if (Number.isNaN(bookingDate.getTime())) {
       throw new BadRequestException('Invalid booking date');
     }
-    // Bookings must be in the future (allow same-day, strip time comparison)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (bookingDate < today) {
-      throw new BadRequestException('Booking date cannot be in the past');
-    }
-    // Max 90 days ahead
-    const maxDate = new Date();
-    maxDate.setDate(maxDate.getDate() + 90);
-    if (bookingDate > maxDate) {
-      throw new BadRequestException(
-        'Bookings can only be made up to 90 days in advance',
-      );
-    }
+    // Bookings must be in the future (same day allowed) and within 90 days
+    this.assertBookableDate(bookingDate);
 
     if (!TIME_REGEX.test(createBookingDto.bookingTime || '')) {
       throw new BadRequestException(
@@ -135,19 +158,8 @@ export class BookingsService {
     const dayKey = this.dayKey(createBookingDto.restaurantId, bookingDate);
     const createWithinLock = async () => {
       const seatsTaken = await this.sumActiveSeats({
-        restaurantId: createBookingDto.restaurantId,
-        bookingDate: {
-          $gte: new Date(
-            bookingDate.getFullYear(),
-            bookingDate.getMonth(),
-            bookingDate.getDate(),
-          ),
-          $lt: new Date(
-            bookingDate.getFullYear(),
-            bookingDate.getMonth(),
-            bookingDate.getDate() + 1,
-          ),
-        },
+        restaurantId: new Types.ObjectId(createBookingDto.restaurantId),
+        bookingDate: this.dayRange(bookingDate),
         status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
       });
       if (
@@ -177,9 +189,7 @@ export class BookingsService {
       return this.formatBooking(created);
     };
 
-    return this.redis.isConfigured
-      ? this.redis.withLock(`booking:${dayKey}`, createWithinLock)
-      : this.withDayLock(dayKey, createWithinLock);
+    return this.runLocked(dayKey, createWithinLock);
   }
 
   async findAll(
@@ -317,46 +327,58 @@ export class BookingsService {
     delete updateBookingDto.customerId;
     delete updateBookingDto.restaurantId;
 
-    // Re-validate the combined state (existing values + patch) exactly like
-    // create() does, so no edit path can slip past date/guests/capacity rules.
-    const nextDate = updateBookingDto.bookingDate
-      ? new Date(updateBookingDto.bookingDate)
+    const isAdmin = grantedRoles.has(roles.ADMIN);
+    if (!isOwner && !isAdmin) {
+      // Only the restaurant may post notes/reasons that the customer sees as
+      // coming from the restaurant.
+      delete updateBookingDto.ownerNote;
+      delete updateBookingDto.rejectionReason;
+      // Customers can't edit a booking that is already finished or cancelled.
+      if (
+        existing.status !== reviewsEnums.PENDING &&
+        existing.status !== reviewsEnums.CONFIRMED
+      ) {
+        throw new BadRequestException(
+          `A booking in status "${existing.status}" can no longer be changed`,
+        );
+      }
+    }
+
+    // Only re-validate what the caller is actually changing. Re-checking the
+    // untouched date made it impossible for an owner to confirm/complete a
+    // booking once its day had arrived or passed.
+    const dateChanged = Boolean(updateBookingDto.bookingDate);
+    const nextDate = dateChanged
+      ? new Date(updateBookingDto.bookingDate as string)
       : new Date(existing.bookingDate);
     if (Number.isNaN(nextDate.getTime())) {
       throw new BadRequestException('Invalid booking date');
     }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (nextDate < today) {
-      throw new BadRequestException('Booking date cannot be in the past');
-    }
-    const maxDate = new Date();
-    maxDate.setDate(maxDate.getDate() + 90);
-    if (nextDate > maxDate) {
-      throw new BadRequestException(
-        'Bookings can only be made up to 90 days in advance',
-      );
-    }
+    if (dateChanged) this.assertBookableDate(nextDate);
 
-    const nextTime = updateBookingDto.bookingTime || existing.bookingTime;
-    if (!TIME_REGEX.test(nextTime || '')) {
+    if (
+      updateBookingDto.bookingTime !== undefined &&
+      !TIME_REGEX.test(updateBookingDto.bookingTime || '')
+    ) {
       throw new BadRequestException(
         'bookingTime must be a valid time in HH:MM format',
       );
     }
 
-    const nextGuests =
-      updateBookingDto.guests !== undefined
-        ? Number(updateBookingDto.guests)
-        : Number(existing.guests);
-    if (!Number.isInteger(nextGuests) || nextGuests < 1 || nextGuests > 50) {
+    const guestsChanged = updateBookingDto.guests !== undefined;
+    const nextGuests = guestsChanged
+      ? Number(updateBookingDto.guests)
+      : Number(existing.guests);
+    if (
+      guestsChanged &&
+      (!Number.isInteger(nextGuests) || nextGuests < 1 || nextGuests > 50)
+    ) {
       throw new BadRequestException('Guests must be between 1 and 50');
     }
 
-    const restaurantDoc = await this.restaurantModel.findById(
-      existing.restaurantId,
-    );
+    const restaurantDoc = existingRestaurant;
     if (
+      guestsChanged &&
       restaurantDoc?.capacity &&
       nextGuests > Number(restaurantDoc.capacity)
     ) {
@@ -365,29 +387,27 @@ export class BookingsService {
       );
     }
 
+    const isActiveStatus = (status?: string) =>
+      status === reviewsEnums.PENDING || status === reviewsEnums.CONFIRMED;
+    const nextStatus = updateBookingDto.status ?? existing.status;
+    // Seats only need re-checking when this edit can add load to a day:
+    // moving the date, adding guests, or re-activating a released booking.
+    const needsCapacityCheck =
+      isActiveStatus(nextStatus) &&
+      (dateChanged || guestsChanged || !isActiveStatus(existing.status));
+
     // Capacity check + write under the same per-day lock as create() so an
     // edit racing a new booking can't overcommit the restaurant.
-    return this.withDayLock(
+    return this.runLocked(
       this.dayKey(existing.restaurantId.toString(), nextDate),
       async () => {
-        if (restaurantDoc?.capacity) {
+        if (needsCapacityCheck && restaurantDoc?.capacity) {
           // Capacity check against other active bookings on that date — excluding
           // this booking itself from the sum.
           const seatsTaken = await this.sumActiveSeats({
             _id: { $ne: existing._id },
             restaurantId: existing.restaurantId,
-            bookingDate: {
-              $gte: new Date(
-                nextDate.getFullYear(),
-                nextDate.getMonth(),
-                nextDate.getDate(),
-              ),
-              $lt: new Date(
-                nextDate.getFullYear(),
-                nextDate.getMonth(),
-                nextDate.getDate() + 1,
-              ),
-            },
+            bookingDate: this.dayRange(nextDate),
             status: { $in: [reviewsEnums.PENDING, reviewsEnums.CONFIRMED] },
           });
           if (seatsTaken + nextGuests > Number(restaurantDoc.capacity)) {
@@ -402,10 +422,8 @@ export class BookingsService {
             id,
             {
               ...updateBookingDto,
-              ...(updateBookingDto.bookingDate
-                ? { bookingDate: nextDate }
-                : {}),
-              guests: nextGuests,
+              ...(dateChanged ? { bookingDate: nextDate } : {}),
+              ...(guestsChanged ? { guests: nextGuests } : {}),
             },
             { returnDocument: 'after' },
           )

@@ -176,7 +176,12 @@ export class UsersService implements OnModuleInit {
     );
   }
 
-  async findAll(role?: string, status?: string) {
+  async findAll(
+    role?: string,
+    status?: string,
+    pageQuery?: string,
+    limitQuery?: string,
+  ) {
     const filter: Record<string, unknown> = {};
     if (role) {
       const mappedRole =
@@ -185,10 +190,41 @@ export class UsersService implements OnModuleInit {
     }
     if (status) filter.status = status;
 
-    const users = await this.userModel
-      .find(filter)
-      .select('-password -refreshToken');
-    return users.map((u) => this.formatUser(u));
+    // Previously unbounded: one request pulled every user (and every embedded
+    // auth session) into memory. Bound it, and let callers opt in to paging.
+    const requestedPage = pageQuery !== undefined || limitQuery !== undefined;
+    const page = Math.max(parseInt(pageQuery || '1', 10) || 1, 1);
+    const limit = Math.min(
+      Math.max(
+        parseInt(limitQuery || (requestedPage ? '20' : '500'), 10) || 500,
+        1,
+      ),
+      500,
+    );
+    const [users, total] = await Promise.all([
+      this.userModel
+        .find(filter)
+        .select('-password -refreshToken -authSessions')
+        .sort({ _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+      requestedPage
+        ? this.userModel.countDocuments(filter).exec()
+        : Promise.resolve(0),
+    ]);
+    const data = users.map((u) => this.formatUser(u));
+    return requestedPage
+      ? {
+          data,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit),
+          },
+        }
+      : data;
   }
 
   async findOne(id: string, userId?: string, userRole?: string) {

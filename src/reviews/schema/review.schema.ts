@@ -28,3 +28,5 @@ export class review {
 export const reviewschema = SchemaFactory.createForClass(review);
 
 reviewschema.index({ restaurantId: 1, createdAt: -1 });
+// Backs the "already reviewed this restaurant?" check on every new review
+reviewschema.index({ customerId: 1, restaurantId: 1 });

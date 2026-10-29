@@ -19,7 +19,6 @@ import { emailverificationDto } from './dto/emailVerification.dto';
 import { loginAuthDto } from './dto/login-auth.dto';
 import { ForgotAuthDto } from './dto/Forgot.dto';
 import { resetAuthDto } from './dto/reset-auth.dto';
-import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { Throttle } from '@nestjs/throttler';
@@ -31,7 +30,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OAuthCodeRecord } from './schema/oauth-record.schema';
 import passport from 'passport';
-import { OAuthStateService } from './oauth-state.service';
+import { OAuthStateService, OAuthRole } from './oauth-state.service';
 import { isProductionEnv } from 'src/config/env.validation';
 import { AuthAccountType } from 'src/users/schema/user.schema';
 import { CreateOwnerAuthDto } from './dto/owner-signup-auth.dto';
@@ -45,6 +44,10 @@ function frontendUrl(): string {
   return (process.env.FRONTEND_URL || 'http://localhost:5173')
     .trim()
     .replace(/\/+$/, '');
+}
+
+function loginPageFor(role: OAuthRole): string {
+  return role === 'owner' ? '/owner-login' : '/login';
 }
 
 function refreshCookieMaxAge(): number {
@@ -189,13 +192,13 @@ export class AuthController {
 
   @Post('resend-otp')
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
-  resendOtp(@Body() body: { email: string }) {
+  resendOtp(@Body() body: ForgotAuthDto) {
     return this.authService.resendOtp(body.email, AuthAccountType.CUSTOMER);
   }
 
   @Post('owner/resend-otp')
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
-  resendOwnerOtp(@Body() body: { email: string }) {
+  resendOwnerOtp(@Body() body: ForgotAuthDto) {
     return this.authService.resendOtp(body.email, AuthAccountType.OWNER);
   }
 
@@ -387,7 +390,8 @@ export class AuthController {
     @Body() body: { code: string },
     @Res({ passthrough: true }) res: Response,
   ) {
-    if (!body?.code) throw new BadRequestException('code is required');
+    if (!body?.code || typeof body.code !== 'string' || body.code.length > 100)
+      throw new BadRequestException('code is required');
     const codeHash = createHash('sha256').update(body.code).digest('hex');
     const entry = await this.oauthCodeModel
       .findOneAndDelete({
@@ -405,9 +409,11 @@ export class AuthController {
   // Google OAuth
   // ──────────────────────────────────────────
   @Get('google')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   async googleAuth(@Req() req: any, @Res() res: Response) {
     const redirectBase = frontendUrl();
-    const errorPage = req.query?.role === 'owner' ? '/owner-login' : '/login';
+    const role: OAuthRole = req.query?.role === 'owner' ? 'owner' : 'customer';
+    const errorPage = loginPageFor(role);
     if (!this.googleConfigured) {
       this.logger.warn(
         'Google OAuth requested but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set in .env',
@@ -419,12 +425,21 @@ export class AuthController {
     // CSRF protection: a fresh one-time state is minted per request and sent
     // to Google as the OAuth2 `state` parameter. Google echoes it back on the
     // callback, where it is validated and burned (see googleCallback).
-    const state = await this.oauthState.issue();
+    let state: string;
+    try {
+      state = await this.oauthState.issue(role);
+    } catch (err) {
+      this.logger.error('Could not persist OAuth state', err as Error);
+      return res.redirect(
+        `${redirectBase}${errorPage}?error=${encodeURIComponent('Could not start Google Sign In. Please try again.')}`,
+      );
+    }
     const authenticate = passport.authenticate('google', {
       session: false,
       state, // passport-oauth2 forwards caller-provided state to the provider
       scope: ['email', 'profile'],
-    });
+      prompt: 'select_account', // let users on shared devices pick the account
+    } as any);
     authenticate(req, res, (err: any) => {
       // Only invoked on failure — on success passport has already redirected
       this.logger.warn('Google OAuth start failed', err);
@@ -435,6 +450,7 @@ export class AuthController {
   }
 
   @Get('google/callback')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   // Note: this @nestjs/passport version types AuthGuard with a single arg.
   // No express-session is installed, so passport's session mode is inert
   // anyway — the CSRF guarantee comes from the one-time state check below.
@@ -446,7 +462,13 @@ export class AuthController {
     const redirectBase = frontendUrl();
     // The state MUST round-trip: absent, unknown, reused, or expired state
     // means the callback was forged or replayed — reject before trusting it.
-    if (!state || !(await this.oauthState.consume(state))) {
+    let flow: { role: OAuthRole } | null = null;
+    try {
+      flow = state ? await this.oauthState.consumeWithRole(state) : null;
+    } catch (err) {
+      this.logger.error('Could not validate OAuth state', err as Error);
+    }
+    if (!flow) {
       this.logger.warn(
         'Google OAuth callback rejected: invalid or missing state',
       );
@@ -454,15 +476,32 @@ export class AuthController {
         `${redirectBase}/login?error=${encodeURIComponent('Invalid or expired OAuth state. Please try signing in again.')}`,
       );
     }
-    // Validate and consume state before Passport exchanges Google's code. This
-    // prevents a forged callback from creating a login session in the browser.
-    return passport.authenticate('google', { session: false }, (err: any, user: any) => {
-      if (err || !user) {
-        this.logger.warn('Google OAuth callback failed', err);
-        return res.redirect(`${redirectBase}/login?error=OAuth+failed`);
-      }
-      return this.redirectOAuthResult(res, user);
-    })(req, res);
+    const errorPage = loginPageFor(flow.role);
+    // The user pressed "Cancel" on Google's consent screen (or Google refused).
+    if (req.query?.error) {
+      const message =
+        req.query.error === 'access_denied'
+          ? 'Google sign-in was cancelled.'
+          : 'Google sign-in failed. Please try again.';
+      return res.redirect(
+        `${redirectBase}${errorPage}?error=${encodeURIComponent(message)}`,
+      );
+    }
+    // State was validated and consumed above, before Passport exchanges
+    // Google's code, so a forged callback can't create a login session.
+    return passport.authenticate(
+      'google',
+      { session: false },
+      (err: any, user: any) => {
+        if (err || !user) {
+          this.logger.warn('Google OAuth callback failed', err);
+          return res.redirect(
+            `${redirectBase}${errorPage}?error=${encodeURIComponent('Google sign-in failed. Please try again.')}`,
+          );
+        }
+        return this.redirectOAuthResult(res, user, errorPage);
+      },
+    )(req, res);
   }
 
   // ──────────────────────────────────────────
@@ -530,16 +569,17 @@ export class AuthController {
       user?: unknown;
       authError?: string;
     },
+    errorPage = '/login',
   ) {
     const redirectBase = frontendUrl();
     try {
       if (result?.authError) {
         return res.redirect(
-          `${redirectBase}/login?error=${encodeURIComponent(result.authError)}`,
+          `${redirectBase}${errorPage}?error=${encodeURIComponent(result.authError)}`,
         );
       }
       if (!result?.accessToken || !result?.user) {
-        return res.redirect(`${redirectBase}/login?error=OAuth+failed`);
+        return res.redirect(`${redirectBase}${errorPage}?error=OAuth+failed`);
       }
       // One-time code instead of tokens in the URL — tokens no longer land in
       // browser history, logs, or Referer headers.
@@ -557,7 +597,7 @@ export class AuthController {
         `${redirectBase}/auth/callback?code=${encodeURIComponent(code)}`,
       );
     } catch {
-      return res.redirect(`${redirectBase}/login?error=OAuth+failed`);
+      return res.redirect(`${redirectBase}${errorPage}?error=OAuth+failed`);
     }
   }
 }

@@ -98,7 +98,9 @@ export class MailService implements OnModuleInit {
     }
 
     if (resendKey && resendFrom) {
-      this.logger.log(`Resend email provider configured with sender: ${resendFrom}`);
+      this.logger.log(
+        `Resend email provider configured with sender: ${resendFrom}`,
+      );
       return;
     }
 

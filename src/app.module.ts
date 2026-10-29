@@ -19,7 +19,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { MailModule } from './mail/mail.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { MongoExceptionFilter } from './common/filters/mongo-exception.filter';
 import { validateEnv, isProductionEnv } from './config/env.validation';
 import { RedisModule } from './redis/redis.module';
 import { RedisService } from './redis/redis.service';
@@ -108,6 +109,10 @@ import { RedisThrottlerStorage } from './redis/redis-throttler.storage';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: MongoExceptionFilter,
     },
   ],
 })

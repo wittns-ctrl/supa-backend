@@ -14,6 +14,7 @@ import { menu, menuDocument } from 'src/menus/schema/menu.schema';
 import {
   restaurant,
   restaurantDocument,
+  RestaurantStatus,
 } from 'src/restaurants/schema/restaurant.schema';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import {
@@ -168,12 +169,26 @@ export class OrdersService {
       }
       return { id: new Types.ObjectId(item.menuItemId), qty };
     });
-    // Fetch all cart items in one database round trip instead of one query per item.
-    const menuItems = await this.menuModel
-      .find({
-        _id: { $in: validItems.map(({ id }) => id) },
-      })
-      .exec();
+    // Fetch the restaurant, customer and every cart item concurrently — one
+    // round trip each instead of a serial chain (and no per-item queries).
+    const [restaurantDoc, customerDoc, menuItems] = await Promise.all([
+      this.restaurantModel.findById(dto.restaurantId).exec(),
+      this.userModel.findById(dto.customerId).select('name email phone').exec(),
+      this.menuModel
+        .find({ _id: { $in: validItems.map(({ id }) => id) } })
+        .exec(),
+    ]);
+    // Orders can only be placed with a live, approved restaurant; otherwise
+    // the order would be created with nobody to receive or notify.
+    if (
+      !restaurantDoc ||
+      restaurantDoc.status !== RestaurantStatus.ACTIVE ||
+      !restaurantDoc.isApproved
+    ) {
+      throw new BadRequestException(
+        'This restaurant is not currently accepting orders',
+      );
+    }
     const menuById = new Map(
       menuItems.map((menuItem) => [menuItem._id.toString(), menuItem]),
     );
@@ -209,6 +224,8 @@ export class OrdersService {
       });
       subtotal += Number(menuItem.price) * item.qty;
     }
+    // Avoid float drift (e.g. 0.1 * 3) leaking into stored/charged amounts.
+    subtotal = Math.round(subtotal * 100) / 100;
 
     const discount = 0;
     const deliveryFee = 3.99;
@@ -238,10 +255,6 @@ export class OrdersService {
       timeline,
     });
 
-    const restaurantDoc = await this.restaurantModel.findById(dto.restaurantId);
-    const customerDoc = await this.userModel
-      .findById(dto.customerId)
-      .select('name email phone');
     const createdAt = new Date();
     const orderTrace = {
       eventType: 'order.created',
@@ -270,23 +283,31 @@ export class OrdersService {
         requestedTime: created.timeSlot,
       },
     };
-    if (restaurantDoc) {
-      await this.notificationsService.create({
+    // The order is already saved; a notification hiccup must not fail the
+    // request (the customer would retry and double-order).
+    const notified = await Promise.allSettled([
+      this.notificationsService.create({
         userId: restaurantDoc.ownerId.toString(),
         title: 'New Order',
         message: `New order received - $${total.toFixed(2)}`,
         details: orderTrace,
-      });
+      }),
+      this.notificationsService.create({
+        userId: dto.customerId,
+        title: 'Order Placed',
+        message: `Your order #${created._id.toString().slice(-4)} has been placed`,
+        details: orderTrace,
+      }),
+    ]);
+    for (const outcome of notified) {
+      if (outcome.status === 'rejected') {
+        this.logger.warn(
+          `Order ${created._id.toString()} notification failed: ${String(outcome.reason)}`,
+        );
+      }
     }
 
-    await this.notificationsService.create({
-      userId: dto.customerId,
-      title: 'Order Placed',
-      message: `Your order #${created._id.toString().slice(-4)} has been placed`,
-      details: orderTrace,
-    });
-
-    return this.formatOrder(created, restaurantDoc?.name);
+    return this.formatOrder(created, restaurantDoc.name);
   }
 
   async findAll(
@@ -302,12 +323,17 @@ export class OrdersService {
     const filter: Record<string, unknown> = {};
 
     if (userRole === roles.ADMIN) {
+      if (customerId && !Types.ObjectId.isValid(customerId))
+        throw new BadRequestException('Invalid customer id');
+      if (restaurantId && !Types.ObjectId.isValid(restaurantId))
+        throw new BadRequestException('Invalid restaurant id');
       if (customerId) filter.customerId = customerId;
       if (restaurantId) filter.restaurantId = restaurantId;
     } else if (userRole === roles.OWNER) {
       const owned = await this.restaurantModel
         .find({ ownerId: userId })
-        .select('_id');
+        .select('_id')
+        .lean();
       const ownedIds = owned.map((r) => r._id);
       if (restaurantId) {
         if (!ownedIds.some((id) => id.toString() === restaurantId)) {

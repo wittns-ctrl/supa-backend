@@ -3,6 +3,7 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded, static as expressStatic } from 'express';
 import helmet from 'helmet';
+import compression from 'compression';
 import { mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { AppModule } from './app.module';
@@ -129,6 +130,17 @@ async function bootstrap() {
     );
   }
 
+  // gzip/br JSON and text responses. Server-sent events must stay unbuffered or
+  // order-tracking updates would be held back until the buffer fills.
+  app.use(
+    compression({
+      filter: (req, res) =>
+        String(req.headers.accept || '').includes('text/event-stream')
+          ? false
+          : compression.filter(req, res),
+    }),
+  );
+
   app.use(json({ limit: '1mb' }));
   app.use(urlencoded({ extended: true }));
 
@@ -144,8 +156,9 @@ async function bootstrap() {
   app.use(
     '/uploads',
     expressStatic(resolve(UPLOAD_DIR), {
-      maxAge: '7d',
-      immutable: false,
+      // Files are UUID-named and never rewritten, so they can be cached hard.
+      maxAge: '30d',
+      immutable: true,
     }),
   );
 
@@ -183,7 +196,7 @@ async function bootstrap() {
   }
 
   const port = Number(process.env.PORT) || 3000;
-  await app.listen(port,'0.0.0.0');
+  await app.listen(port, '0.0.0.0');
   logger.log(
     `🚀 SupaMeal API listening on port ${port} (${isProd ? 'production' : 'development'})`,
   );

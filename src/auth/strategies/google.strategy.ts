@@ -45,7 +45,9 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   ): Promise<any> {
     const { name, emails, photos } = profile;
     const email = emails?.[0]?.value;
-    const emailVerified = profile?._json?.email_verified === true;
+    // Google returns a boolean, but older userinfo versions returned "true".
+    const rawVerified = profile?._json?.email_verified;
+    const emailVerified = rawVerified === true || rawVerified === 'true';
     const displayName =
       `${name?.givenName || ''} ${name?.familyName || ''}`.trim();
     const imageurl = photos?.[0]?.value;
@@ -63,10 +65,11 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       });
       done(null, result);
     } catch (err) {
-      if (/ACCOUNT_BLOCKED/i.test(err?.message || '')) {
-        done(null, { authError: err.message });
+      const message = err instanceof Error ? err.message : String(err);
+      if (/ACCOUNT_BLOCKED/i.test(message)) {
+        done(null, { authError: message });
       } else {
-        done(err, false);
+        done(err as Error, false);
       }
     }
   }

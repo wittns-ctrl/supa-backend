@@ -118,47 +118,27 @@ export class MenusService {
       items = rows;
       total = count;
     } else {
-      const visibilityStages: any[] = [
-        {
-          $lookup: {
-            from: this.restaurantModel.collection.name,
-            let: { restaurantId: '$restaurant' },
-            pipeline: [
-              {
-                $match: {
-                  $expr: {
-                    $and: [
-                      { $eq: ['$_id', '$$restaurantId'] },
-                      { $eq: ['$isApproved', true] },
-                      { $eq: ['$status', RestaurantStatus.ACTIVE] },
-                    ],
-                  },
-                },
-              },
-              { $project: { _id: 1 } },
-            ],
-            as: 'visibleRestaurant',
-          },
-        },
-        { $match: { 'visibleRestaurant.0': { $exists: true } } },
-      ];
+      // Resolve the (small) set of publicly visible restaurants first, then
+      // page the menu with an indexed `$in`. The old pipeline ran a $lookup for
+      // EVERY menu item in the database before it could skip/limit a page.
+      const visibleIds = await this.restaurantModel
+        .find({ isApproved: true, status: RestaurantStatus.ACTIVE })
+        .distinct('_id')
+        .exec();
+      const filter = { restaurant: { $in: visibleIds } };
       const [rows, count] = await Promise.all([
         this.menuModel
-          .aggregate([
-            ...visibilityStages,
-            { $sort: { category: 1, _id: 1 } },
-            { $skip: (page - 1) * limit },
-            { $limit: limit },
-          ])
+          .find(filter)
+          .sort({ category: 1, _id: 1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
           .exec(),
         requestedPage
-          ? this.menuModel
-              .aggregate([...visibilityStages, { $count: 'total' }])
-              .exec()
-          : Promise.resolve([]),
+          ? this.menuModel.countDocuments(filter).exec()
+          : Promise.resolve(0),
       ]);
       items = rows;
-      total = count[0]?.total || 0;
+      total = count;
     }
 
     const data = items.map((m) => this.formatMenu(m));

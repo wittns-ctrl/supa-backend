@@ -212,7 +212,10 @@ export function validateEnv(
         'FATAL: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are required in production',
       );
     }
-    if (!config.FRONTEND_URL || !/^https:\/\//i.test(String(config.FRONTEND_URL))) {
+    if (
+      !config.FRONTEND_URL ||
+      !/^https:\/\//i.test(String(config.FRONTEND_URL))
+    ) {
       throw new Error(
         'FATAL: FRONTEND_URL must be the deployed HTTPS frontend URL in production',
       );
@@ -248,6 +251,14 @@ export function validateEnv(
     }
     if (/dev-only-insecure/.test(String(config.JWT_SECRET))) {
       throw new Error('FATAL: dev fallback JWT_SECRET detected in production');
+    }
+    if (/dev-only-insecure/.test(String(config.JWT_REFRESH))) {
+      throw new Error('FATAL: dev fallback JWT_REFRESH detected in production');
+    }
+    // Sharing one secret lets a stolen access token be replayed as a refresh
+    // token (and vice versa), defeating the point of two token types.
+    if (config.JWT_SECRET === config.JWT_REFRESH) {
+      throw new Error('FATAL: JWT_SECRET and JWT_REFRESH must be different');
     }
   }
 

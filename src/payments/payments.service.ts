@@ -23,6 +23,8 @@ import { MailService } from 'src/mail/mail.service';
 import { randomUUID } from 'crypto';
 import { roles } from 'src/users/schema/user.schema';
 
+const PAYPAL_TIMEOUT_MS = 15_000;
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -80,36 +82,89 @@ export class PaymentsService {
     return { clientId: this.paypalClientId, currency: this.currency };
   }
 
+  // PayPal access tokens live for ~9 hours. Fetching a fresh one per call
+  // doubled the latency (and PayPal rate-limit usage) of every payment request.
+  private cachedToken?: { value: string; expiresAt: number };
+  private pendingToken?: Promise<string>;
+
+  private async getPaypalToken(forceRefresh = false): Promise<string> {
+    if (
+      !forceRefresh &&
+      this.cachedToken &&
+      this.cachedToken.expiresAt > Date.now() + 60_000
+    ) {
+      return this.cachedToken.value;
+    }
+    // Concurrent callers share one in-flight token request.
+    if (!this.pendingToken) {
+      this.pendingToken = (async () => {
+        const credentials = Buffer.from(
+          `${this.paypalClientId}:${this.paypalClientSecret}`,
+        ).toString('base64');
+        const tokenResponse = await fetch(
+          `${this.paypalApiBase}/v1/oauth2/token`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Basic ${credentials}`,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'grant_type=client_credentials',
+            signal: AbortSignal.timeout(PAYPAL_TIMEOUT_MS),
+          },
+        );
+        if (!tokenResponse.ok) {
+          this.logger.error(
+            `PayPal OAuth failed with status ${tokenResponse.status}`,
+          );
+          throw new BadRequestException(
+            'Could not authenticate with PayPal. Check the configured API credentials.',
+          );
+        }
+        const token = (await tokenResponse.json()) as {
+          access_token: string;
+          expires_in?: number;
+        };
+        this.cachedToken = {
+          value: token.access_token,
+          expiresAt: Date.now() + (Number(token.expires_in) || 300) * 1000,
+        };
+        return token.access_token;
+      })().finally(() => {
+        this.pendingToken = undefined;
+      });
+    }
+    return this.pendingToken;
+  }
+
   private async paypalRequest(path: string, options: RequestInit = {}) {
     this.assertPaypalConfigured();
-    const credentials = Buffer.from(
-      `${this.paypalClientId}:${this.paypalClientSecret}`,
-    ).toString('base64');
-    const tokenResponse = await fetch(`${this.paypalApiBase}/v1/oauth2/token`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: 'grant_type=client_credentials',
-    });
-    if (!tokenResponse.ok) {
+    const send = async (accessToken: string) =>
+      fetch(`${this.paypalApiBase}${path}`, {
+        ...options,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+        signal: AbortSignal.timeout(PAYPAL_TIMEOUT_MS),
+      });
+    let response: Response;
+    try {
+      response = await send(await this.getPaypalToken());
+      if (response.status === 401) {
+        // Token revoked/expired early — fetch a new one and retry once.
+        response = await send(await this.getPaypalToken(true));
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
       this.logger.error(
-        `PayPal OAuth failed with status ${tokenResponse.status}`,
+        `PayPal request ${path} failed: ${(error as Error).message}`,
       );
       throw new BadRequestException(
-        'Could not authenticate with PayPal. Check the configured API credentials.',
+        'PayPal is not responding right now. Please try again.',
       );
     }
-    const token = (await tokenResponse.json()) as { access_token: string };
-    const response = await fetch(`${this.paypalApiBase}${path}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${token.access_token}`,
-        'Content-Type': 'application/json',
-        ...(options.headers || {}),
-      },
-    });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       this.logger.error(
@@ -306,21 +361,38 @@ export class PaymentsService {
       );
     }
 
+    // Atomically claim the PENDING -> PAID transition and store the capture id
+    // in one write. Two concurrent capture requests (double-click, retry) both
+    // reach this point, but only one may notify the customer and send a receipt.
+    const claimed = await this.paymentModel
+      .findOneAndUpdate(
+        { _id: record._id, status: Payments.PENDING },
+        {
+          $set: {
+            status: Payments.PAID,
+            transactionId: capture.id,
+            currency: capturedCurrency,
+            amount: capturedAmount,
+          },
+        },
+        { returnDocument: 'after' },
+      )
+      .exec();
+    if (!claimed) {
+      return {
+        success: true,
+        paymentStatus: 'succeeded',
+        orderId: order.id,
+        status: order.status,
+        amount: capturedAmount,
+      };
+    }
+
     const applied = await this._applyPaid(
       order.id,
       paypalOrderId,
       capturedAmount,
       capture.id,
-    );
-    await this.paymentModel.updateOne(
-      { _id: record._id },
-      {
-        $set: {
-          transactionId: capture.id,
-          currency: capturedCurrency,
-          status: Payments.PAID,
-        },
-      },
     );
     await this.sendPaymentReceipt(order.id, capturedAmount, capturedCurrency);
     return {
@@ -339,13 +411,8 @@ export class PaymentsService {
     const order = await this.orderModel.findById(orderId);
     if (!order) throw new NotFoundException('Order not found');
 
-    await this.paymentModel.updateOne(
-      { paymentIntentId },
-      {
-        $set: { status: Payments.PAID, transactionId: paymentIntentId, amount },
-      },
-      { upsert: false },
-    );
+    // The payment row was already marked PAID (with the capture id) by the
+    // atomic claim in capturePaypalOrder; this only reports the outcome.
 
     // Idempotency + state guard: payment confirmation must not accept the
     // order. The restaurant owner performs that explicit transition.

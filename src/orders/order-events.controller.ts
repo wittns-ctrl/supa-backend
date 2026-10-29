@@ -77,25 +77,37 @@ export class OrderEventsController {
       if (!closed) subject.next({ type: 'update', data: event });
     });
 
-    // Catch-up: status changed while connecting → send it immediately
-    const last = await this.orderEvents.lastEventFor(id);
-    if (last && last.status !== (order as { status?: string }).status) {
-      subject.next({ type: 'update', data: last });
-    }
-
     // Heartbeat keeps idle connections alive through proxies
     const ping = setInterval(() => {
       if (!closed) subject.next({ type: 'ping', data: { t: Date.now() } });
     }, 25_000);
 
-    // Cleanup on client disconnect (req close fires even without @Res)
-    req.on('close', () => {
+    // Cleanup on client disconnect (req close fires even without @Res).
+    // Registered BEFORE the awaited catch-up below: a client that drops during
+    // that await would otherwise never trigger cleanup and leak the listener
+    // and the interval for the lifetime of the process.
+    const cleanup = () => {
       if (closed) return;
       closed = true;
       clearInterval(ping);
       unsubscribe();
       subject.complete();
-    });
+    };
+    req.on('close', cleanup);
+
+    // Catch-up: status changed while connecting → send it immediately
+    try {
+      const last = await this.orderEvents.lastEventFor(id);
+      if (
+        !closed &&
+        last &&
+        last.status !== (order as { status?: string }).status
+      ) {
+        subject.next({ type: 'update', data: last });
+      }
+    } catch {
+      // Live updates still flow; the catch-up is best-effort.
+    }
 
     return subject.asObservable();
   }

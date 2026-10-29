@@ -6,6 +6,10 @@ export class OAuthStateRecord {
   @Prop({ required: true, unique: true })
   state!: string;
 
+  // Which login page started the flow ('customer' | 'owner')
+  @Prop({ default: 'customer' })
+  role?: string;
+
   @Prop({ required: true })
   expiresAt!: Date;
 }

@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   NotFoundException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { CreateAuthDto } from './dto/signup-auth.dto';
 import { loginAuthDto } from './dto/login-auth.dto';
@@ -31,6 +32,7 @@ import { MailService } from 'src/mail/mail.service';
 import { emailverificationDto } from './dto/emailVerification.dto';
 import { LogoutAuthDto } from './dto/Logout.dto';
 import { sanitizeUser } from 'src/common/utils/user-response.util';
+import { escapeRegExp } from 'src/common/utils/regex.util';
 
 const OTP_MAX_ATTEMPTS = 5;
 
@@ -76,9 +78,16 @@ function safeEqualHex(a: string, b: string): boolean {
   }
 }
 
+// Valid bcrypt hash of a throwaway string. Compared against when no usable
+// account exists so "unknown email" and "wrong password" take the same time.
+const TIMING_EQUALIZER_HASH =
+  '$2b$10$jny/kR5.qZtt/XcXgGB.9uXUfvIFjDoTxaBPauRkyTvMaxKqj.lai';
+
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
+  // Assume legacy records exist until the boot-time probe says otherwise.
+  private hasLegacyMixedCaseEmails = true;
 
   constructor(
     @InjectModel(User.name)
@@ -106,21 +115,34 @@ export class AuthService {
     };
 
     // New and normalized accounts use the compound { email, accountType }
-    // index. Keep a case-insensitive fallback for legacy mixed-case records.
+    // index.
     const exactMatch = await this.userModel
       .findOne({ ...accountFilter, email: normalized })
       .exec();
     if (exactMatch) return exactMatch;
 
+    // The case-insensitive regex cannot use the index (full scan), so it only
+    // runs when legacy mixed-case emails were detected at boot. The input MUST
+    // be escaped: an unescaped `a|x@evil.com` would otherwise match another
+    // user's record and redirect their reset token to the attacker.
+    if (!this.hasLegacyMixedCaseEmails) return null;
     return this.userModel.findOne({
       ...accountFilter,
-      email: {
-        $regex: new RegExp(
-          `^${normalized.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`,
-          'i',
-        ),
-      },
+      email: { $regex: new RegExp(`^${escapeRegExp(normalized)}$`, 'i') },
     });
+  }
+
+  async onModuleInit() {
+    try {
+      this.hasLegacyMixedCaseEmails = Boolean(
+        await this.userModel.exists({ email: { $regex: /[A-Z]/ } }),
+      );
+    } catch (error) {
+      // Stay on the safe (slower, still correct) path if the probe fails.
+      this.logger.warn(
+        `Could not probe for legacy mixed-case emails: ${(error as Error).message}`,
+      );
+    }
   }
 
   async createUser(signupdto: CreateAuthDto) {
@@ -359,29 +381,17 @@ export class AuthService {
       accountType === AuthAccountType.ADMIN,
     );
 
-    if (!user) {
-      throw new UnauthorizedException(
-        'Unable to sign in with these credentials. Check your details and account status.',
-      );
-    }
-
-    if (!user.isVerified) {
-      throw new UnauthorizedException(
-        'Unable to sign in with these credentials. Check your details and account status.',
-      );
-    }
-
-    if (!user.password) {
-      throw new UnauthorizedException(
-        'Unable to sign in with these credentials. Check your details and account status.',
-      );
-    }
-
     validateBcryptPassword(signinDto.password);
 
-    const isMatch = await bcrypt.compare(signinDto.password, user.password);
+    // Always run one bcrypt comparison so response time does not reveal
+    // whether the email exists, is verified, or has a password set.
+    const usable = Boolean(user && user.isVerified && user.password);
+    const isMatch = await bcrypt.compare(
+      signinDto.password,
+      usable ? (user!.password as string) : TIMING_EQUALIZER_HASH,
+    );
 
-    if (!isMatch) {
+    if (!user || !usable || !isMatch) {
       throw new UnauthorizedException(
         'Unable to sign in with these credentials. Check your details and account status.',
       );
@@ -460,13 +470,34 @@ export class AuthService {
           'ACCOUNT_BLOCKED: Your account has been blocked by an administrator.',
         );
       }
-      // Link OAuth provider if this is their first OAuth login
-      if (!user.oauthProvider && user.email.toLowerCase() === normalizedEmail) {
-        user.oauthProvider = data.provider;
-        user.oauthProviderId = data.providerId;
+      // The same provider must always present the same subject id. A different
+      // id for an already-linked email means the Google account changed hands.
+      if (
+        user.oauthProvider === data.provider &&
+        user.oauthProviderId &&
+        user.oauthProviderId !== data.providerId
+      ) {
+        throw new UnauthorizedException(
+          'This email is linked to a different sign-in account.',
+        );
       }
       if (!user.isVerified) {
+        // Pre-hijack defence: anyone can start a password signup for an email
+        // they don't own. Now that the provider has proven ownership, drop every
+        // credential/OTP/session the unverified signup could have planted.
+        user.password = undefined;
+        user.emailVerificationOtp = undefined;
+        user.emailVerificationOtpExpires = undefined;
+        user.emailVerificationOtpAttempts = 0;
+        user.resetToken = undefined;
+        user.resetTokenExpiration = undefined;
+        user.authSessions = [];
         user.isVerified = true;
+      }
+      // Link OAuth provider if this is their first OAuth login
+      if (!user.oauthProvider) {
+        user.oauthProvider = data.provider;
+        user.oauthProviderId = data.providerId;
       }
       // Set profile image from OAuth if user doesn't have one yet
       if (data.imageurl && !user.profile?.imageurl) {
@@ -559,7 +590,9 @@ export class AuthService {
         .replace(/\/+$/, '');
       const link = `${frontendUrl}/reset-password?token=${resettoken}&accountType=${accountType}`;
       try {
-        await this.mailservice.sendResetEmail(forgotDto.email, link);
+        // Always mail the address stored on the matched account, never the raw
+        // request value, so a crafted input can't redirect another user's link.
+        await this.mailservice.sendResetEmail(user.email, link);
       } catch {
         // swallow mail errors so we don't leak enumeration
       }

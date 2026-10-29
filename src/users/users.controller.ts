@@ -27,8 +27,13 @@ export class UsersController {
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(roles.ADMIN)
-  findAll(@Query('role') role?: string, @Query('status') status?: string) {
-    return this.usersService.findAll(role, status);
+  findAll(
+    @Query('role') role?: string,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.usersService.findAll(role, status, page, limit);
   }
 
   @Get(':id/favorites')

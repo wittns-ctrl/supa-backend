@@ -33,6 +33,16 @@ describe('OAuthStateService', () => {
     expect(await service.consume(state)).toBe(false);
   });
 
+  it('remembers which login page started the flow', async () => {
+    const owner = await service.issue('owner');
+    const customer = await service.issue();
+    expect(await service.consumeWithRole(owner)).toEqual({ role: 'owner' });
+    expect(await service.consumeWithRole(customer)).toEqual({
+      role: 'customer',
+    });
+    expect(await service.consumeWithRole(owner)).toBeNull();
+  });
+
   it('rejects unknown and empty states', async () => {
     expect(await service.consume('unknown')).toBe(false);
     expect(await service.consume('')).toBe(false);

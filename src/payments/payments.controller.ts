@@ -31,7 +31,8 @@ export class PaymentsController {
     @Body() body: { orderId: string },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    if (!body?.orderId) throw new BadRequestException('orderId is required');
+    if (typeof body?.orderId !== 'string' || !body.orderId)
+      throw new BadRequestException('orderId is required');
     return this.paymentsService.createPaypalOrder(
       body.orderId,
       user.id,
@@ -45,7 +46,7 @@ export class PaymentsController {
     @Body() body: { paypalOrderId: string },
     @CurrentUser() user: { id: string; role: string },
   ) {
-    if (!body?.paypalOrderId)
+    if (typeof body?.paypalOrderId !== 'string' || !body.paypalOrderId)
       throw new BadRequestException('paypalOrderId is required');
     return this.paymentsService.capturePaypalOrder(
       body.paypalOrderId,
